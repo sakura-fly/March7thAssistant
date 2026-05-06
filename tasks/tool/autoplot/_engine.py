@@ -219,15 +219,66 @@ class AutoPlot(QObject):
             True  游戏窗口在前台
             False 游戏窗口不在前台或未找到
         """
-        # 在Linux上，由于pygetwindow不支持，假设窗口总是激活的
-        if sys.platform != 'win32' or gw is None:
-            return True
-        
         # Windows平台使用pygetwindow检查窗口激活状态
-        windows = gw.getWindowsWithTitle(self._game_title_name)
-        if not windows:
-            return False
-        return windows[0].isActive
+        if sys.platform == 'win32' and gw is not None:
+            windows = gw.getWindowsWithTitle(self._game_title_name)
+            if not windows:
+                return False
+            return windows[0].isActive
+        
+        # Linux平台使用xdotool检查窗口激活状态
+        elif sys.platform == 'linux':
+            try:
+                import subprocess
+                # 使用xdotool获取当前活动窗口的标题
+                result = subprocess.run(
+                    ['xdotool', 'getactivewindow', 'getwindowname'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                active_window_title = result.stdout.strip()
+                
+                # 检查活动窗口标题是否包含游戏标题
+                if self._game_title_name in active_window_title:
+                    return True
+                
+                # 如果直接匹配失败，尝试更精确的匹配方式
+                # 获取所有匹配的游戏窗口ID
+                result = subprocess.run(
+                    ['xdotool', 'search', '--name', self._game_title_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                if result.returncode != 0 or not result.stdout.strip():
+                    return False
+                
+                # 获取当前活动窗口ID
+                result = subprocess.run(
+                    ['xdotool', 'getactivewindow'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                if result.returncode != 0:
+                    return False
+                
+                active_window_id = result.stdout.strip()
+                
+                # 检查活动窗口ID是否在匹配的游戏窗口列表中
+                game_window_ids = result.stdout.strip().split('\n')
+                return active_window_id in game_window_ids
+                
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                # 如果xdotool不可用或出现错误，假设窗口是激活的（保持原有行为）
+                return True
+        
+        # 其他平台（如macOS）暂时假设窗口总是激活的
+        else:
+            return True
 
     # ========================================================================
     # 监控主循环（每 500ms 触发一次）
