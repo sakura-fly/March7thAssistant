@@ -20,10 +20,16 @@ AutoPlot 是整个自动对话功能的主控制器，负责：
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Callable
 
-import pygetwindow as gw
+# 只在Windows上导入pygetwindow
+if sys.platform == 'win32':
+    import pygetwindow as gw
+else:
+    gw = None
+
 from PySide6.QtCore import QObject, QTimer
 
 from module.automation import auto
@@ -213,6 +219,11 @@ class AutoPlot(QObject):
             True  游戏窗口在前台
             False 游戏窗口不在前台或未找到
         """
+        # 在Linux上，由于pygetwindow不支持，假设窗口总是激活的
+        if sys.platform != 'win32' or gw is None:
+            return True
+        
+        # Windows平台使用pygetwindow检查窗口激活状态
         windows = gw.getWindowsWithTitle(self._game_title_name)
         if not windows:
             return False
