@@ -4,7 +4,15 @@ from typing import Callable
 import time
 import cv2
 import numpy as np
-import pygetwindow as gw
+import sys
+
+# 只在Windows上导入pygetwindow
+if sys.platform == 'win32':
+    import pygetwindow as gw
+else:
+    # Linux平台使用空实现
+    gw = None
+
 from module.automation import auto
 from module.logger import log
 from PySide6.QtCore import QObject, QTimer
@@ -90,6 +98,11 @@ class AutoPlot(QObject):
         log.debug(f"自动对话配置已更新: {options}")
 
     def _is_game_window_active(self) -> bool:
+        # 在Linux上，由于pygetwindow不支持，假设窗口总是激活的
+        if sys.platform != 'win32' or gw is None:
+            return True
+        
+        # Windows平台使用pygetwindow检查窗口激活状态
         window = gw.getWindowsWithTitle(self.game_title_name)
         return window and window[0].isActive
 

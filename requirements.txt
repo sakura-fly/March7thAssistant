@@ -8,7 +8,7 @@ tqdm==4.67.1
 psutil==7.2.1
 pyautogui==0.9.54
 mss==10.1.0
-pygetwindow==0.0.9
+pygetwindow==0.0.9; sys_platform == 'win32'
 requests[socks]==2.33.0
 # charset_normalizer==3.4.5 会导致 RequestsDependencyWarning: Unable to find acceptable character detection dependency (chardet or charset_normalizer).
 charset_normalizer==3.4.4
@@ -36,7 +36,7 @@ nio==3.4.2
 pandas==2.3.3
 openpyxl==3.1.5
 selenium==4.39.0
-keyboard==0.13.5
+keyboard==0.13.5; sys_platform == 'win32'
 opencc==1.2.0
 rapidocr==3.8.1
 onnxruntime-directml==1.24.4; sys_platform == 'win32'
