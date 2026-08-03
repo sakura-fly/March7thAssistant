@@ -1,5 +1,48 @@
 # 更新日志
 
+## v2026.7.26
+- 添加 4.4 版本新增副本
+- 同步 4.4 版本联动卡池名称改动
+- 货币战争新增祈愿试炼弹窗适配
+- 货币战争新增选择伙伴弹窗适配
+- 货币战争支持连续多个弹窗按序处理
+- 新增保留体力计划选项 [#1140](https://github.com/moesnow/March7thAssistant/pull/1140) @henry3218
+- 增加货币战争查找难度1关卡的循环上限至100次
+- 更新支援奖励的图标 [#1152](https://github.com/moesnow/March7thAssistant/pull/1152) @sparklelcm333
+- 修复 pygetwindow 导致非 Windows 平台启动失败 [#1127](https://github.com/moesnow/March7thAssistant/pull/1127) @zzy9001
+- 优化掉落物弹窗识别逻辑并适配新版本 [#1146](https://github.com/moesnow/March7thAssistant/pull/1146) @shing-yu
+- 修复 Chrome 启动错误和尝试自动递增调试端口 [#1144](https://github.com/moesnow/March7thAssistant/pull/1144) @CodingAQ
+- 优化性能和稳定性并修复若干已知问题
+- [欢迎关注我们的B站账号，获取最新动态和教程](https://space.bilibili.com/3706960664857075)
+
+## v2026.6.8
+- 支持 4.3 新副本和角色 [#1109](https://github.com/moesnow/March7thAssistant/pull/1109) @shing-yu
+- 新增自动对话全局快捷键切换功能
+- 支持处理稍后再看界面
+- 为推送方式添加配置教程按钮并优化排序
+- 修复云游戏登录超时处理 [#1115](https://github.com/moesnow/March7thAssistant/pull/1115) @shing-yu
+- 修复新开拓任务弹窗识别 [#1106](https://github.com/moesnow/March7thAssistant/pull/1106) @loader3229
+- 修复编辑主页卡片和流程编排弹窗的深色模式适配
+- 修复混合 DPI 双屏下获取逻辑分辨率而非物理分辨率的问题
+- 修复背包界面添加超时时的确认按钮点击处理
+- 修复存在红点时无法正常切换到材料合成
+- 优化性能和稳定性并修复若干已知问题
+- [欢迎关注我们的B站账号，获取最新动态和教程](https://space.bilibili.com/3706960664857075)
+
+## v2026.5.27
+- 支持开拓者·欢愉 [#1085](https://github.com/moesnow/March7thAssistant/pull/1085) @shing-yu
+- 支持位面饰品提取自动切换队伍 [#938](https://github.com/moesnow/March7thAssistant/pull/938) @alex3236
+- 云游戏支持使用付费时长以及战斗超时处理 [#1051](https://github.com/moesnow/March7thAssistant/pull/1051) [#1059](https://github.com/moesnow/March7thAssistant/pull/1059) @shing-yu
+- Telegram 推送支持 Topics 群组
+- Bark 推送新增 base_url 参数支持自定义服务器地址
+- 企业微信应用通知新增自定义 URL 支持 [#1072](https://github.com/moesnow/March7thAssistant/pull/1072) @shing-yu
+- 新增对自动切换视角弹窗的支持 [#1084](https://github.com/moesnow/March7thAssistant/pull/1084) @shing-yu
+- 更新副本掉落配置，修复部分新副本无法识别的问题 [#1081](https://github.com/moesnow/March7thAssistant/pull/1081) @g60cBQ
+- 优化货币战争装备识别逻辑，阿格莱雅和希儿策略下支持识别进阶装备 [#1054](https://github.com/moesnow/March7thAssistant/pull/1054) @loader3229
+- 修复模拟宇宙快速启动实际执行类型和描述不一致
+- 修复 CI 构建配置兼容性问题 [#1065](https://github.com/moesnow/March7thAssistant/pull/1065) @sparklelcm333
+- 优化性能和稳定性并修复若干已知问题
+
 ## v2026.5.12
 - 货币战争新增 “希儿” 策略（测试版）
 - 新增每月自动合成自塑尘脂、兑换专票通票等超值商品
@@ -9,7 +52,6 @@
 - 修复历战余响提前解锁提示框影响识别 [#1047](https://github.com/moesnow/March7thAssistant/issues/1047) @shing-yu
 - Linux/macOS 浏览器关闭逻辑优化 [#1033](https://github.com/moesnow/March7thAssistant/issues/1033) @shing-yu @stelahaveno
 - 优化性能和稳定性并修复若干已知问题
-- [欢迎关注我们的B站账号，获取最新动态和教程](https://space.bilibili.com/3706960664857075)
 
 ## v2026.5.6
 - 新增 “日常” 任务（合并每日实训和体力）以及 “清体力” 总开关

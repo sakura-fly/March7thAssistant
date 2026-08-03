@@ -179,7 +179,6 @@ pyrightconfig.json
 .vscode
 
 # Test
-/tests
 /test.py
 
 # March7thAssistant
@@ -207,3 +206,14 @@ smtp_temp.bin
 
 # Genshin_StarRail_fps_unlocker
 /3rdparty/Genshin_StarRail_fps_unlocker
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Playwright
+.playwright/
+.playwright-cli/
+
+# Telemetry server
+telemetry_server/

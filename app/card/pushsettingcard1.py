@@ -392,6 +392,9 @@ class PushSettingCardCode(CustomPushSettingCard):
 
     def _get_server(self):
         try:
+            # 如果云游戏启用，默认使用国服
+            if cfg.cloud_game_enable:
+                return 'cn'
             if sys.platform == 'win32':
                 from utils.registry.star_rail_setting import get_server_by_registry
                 server = get_server_by_registry()
@@ -784,11 +787,17 @@ class PushSettingCardPowerPlan(CustomPushSettingCard):
         return tr("已配置 {} 项计划").format(len(self.configvalue))
 
     def __onclicked(self):
-        message_box = MessageBoxPowerPlan(self.title, self.configvalue, self.window())
+        message_box = MessageBoxPowerPlan(
+            self.title,
+            self.configvalue,
+            self.window(),
+            keep_plan=cfg.get_value("power_plan_keep", False),
+        )
         if message_box.exec():
             plans = message_box.get_plans()
             self.configvalue = plans
             cfg.set_value(self.configname, plans)
+            cfg.set_value("power_plan_keep", message_box.should_keep_plan())
             self.contentLabel.setText(self._get_display_text())
 
 

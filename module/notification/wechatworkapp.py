@@ -13,14 +13,14 @@ class WeChatworkappNotifier(Notifier):
 
         :return: 返回访问令牌字符串。
         """
-        access_token_api = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={self.corpid}&corpsecret={self.corpsecret}"
+        access_token_api = f"{self.base_url}/cgi-bin/gettoken?corpid={self.corpid}&corpsecret={self.corpsecret}"
         response = requests.get(access_token_api)
         response.raise_for_status()
         response = response.json()
         if response['errcode'] == 0:
             return response['access_token']
         else:
-            raise Exception(response['errmsg'])
+            raise RuntimeError(response['errmsg'])
 
     def _upload_file(self, upload_file, type="file") -> str:
         """
@@ -31,14 +31,14 @@ class WeChatworkappNotifier(Notifier):
         :return: 返回上传文件的media_id。
         """
         headers = {"Content-Type": "multipart/form-data"}
-        upload_api = f"https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token={self.access_token}&type={type}"
+        upload_api = f"{self.base_url}/cgi-bin/media/upload?access_token={self.access_token}&type={type}"
         response = requests.post(upload_api, headers=headers, files={"media": upload_file})
         response.raise_for_status()
         response = response.json()
         if response['errcode'] == 0:
             return response['media_id']
         else:
-            raise Exception(response['errmsg'])
+            raise RuntimeError(response['errmsg'])
 
     def send_image(self, image):
         """
@@ -55,12 +55,12 @@ class WeChatworkappNotifier(Notifier):
             "image": {"media_id": media_id},
             "safe": 0,
         }
-        send_api = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
+        send_api = f"{self.base_url}/cgi-bin/message/send?access_token={self.access_token}"
         response = requests.post(send_api, headers=headers, data=json.dumps(message))
         response.raise_for_status()
         response = response.json()
         if response['errcode'] != 0:
-            raise Exception(response['errmsg'])
+            raise RuntimeError(response['errmsg'])
 
     def send_text(self, text: str):
         """
@@ -76,12 +76,12 @@ class WeChatworkappNotifier(Notifier):
             "text": {"content": text},
             "safe": 0,
         }
-        send_api = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={self.access_token}"
+        send_api = f"{self.base_url}/cgi-bin/message/send?access_token={self.access_token}"
         response = requests.post(send_api, headers=headers, data=json.dumps(message))
         response.raise_for_status()
         response = response.json()
         if response['errcode'] != 0:
-            raise Exception(response['errmsg'])
+            raise RuntimeError(response['errmsg'])
 
     def send(self, title: str, content: str, image_io=None):
         """
@@ -95,6 +95,7 @@ class WeChatworkappNotifier(Notifier):
         self.corpsecret = self.params["corpsecret"]
         self.agentid = self.params["agentid"]
         self.touser = self.params["touser"]
+        self.base_url = (self.params.get("base_url") or "https://qyapi.weixin.qq.com").rstrip('/')
         self.access_token = self._get_access_token()
 
         # 构建消息文本

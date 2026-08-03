@@ -232,9 +232,10 @@ class CurrencyWars:
                     return target
         return None
 
-    def start(self):
+    def start(self) -> bool:
         log.hr('准备货币战争', '0')
-        if self.run():
+        success = self.run()
+        if success:
             Base.send_notification_with_screenshot("货币战争已完成", NotificationLevel.ALL, self.screenshot)
             self.screenshot = None
         else:
@@ -246,6 +247,7 @@ class CurrencyWars:
         if has_reward and cfg.currencywars_bonus_enable:
             self.process_ornament()
         log.hr("完成", 2)
+        return success
 
     def check_currency_wars_score(self) -> bool:
         """
@@ -417,7 +419,7 @@ class CurrencyWars:
         else:
             # pos = auto.find_element("./assets/images/screen/currency_wars/level_down.png", "image", 100000)
             pos = auto.find_element((936 / 1920, 830 / 1080, 45 / 1920, 31 / 1080), "crop")
-            for _ in range(40):
+            for _ in range(100):
                 if auto.find_element(f"./assets/images/screen/currency_wars/level_1.png", "image", 0.95, crop=(440.0 / 1920, 892.0 / 1080, 385.0 / 1920, 137.0 / 1080)):
                     log.info(f"已选择敌人难度为1的关卡")
                     return True
@@ -971,6 +973,8 @@ class CurrencyWars:
         propeller_img = "./assets/images/share/aglaea/propeller.png"
         # 拆装扳手
         wrench_img = "./assets/images/share/aglaea/wrench.png"
+        # 拆装扳手2
+        wrench2_img = "./assets/images/share/aglaea/wrench2.png"
         # 冶金炉
         stove_img = "./assets/images/share/aglaea/stove.png"
         # 好运令牌
@@ -1047,7 +1051,16 @@ class CurrencyWars:
                             self.shoe_count += 2
                         elif self.shoe_count == 3:
                             # 判断是否存在拆装扳手，移动到角色身上拆掉已有装备
-                            if result_wrench := auto.find_element(wrench_img, "image", 0.9, crop=equip_crop):
+                            if result_wrench2 := auto.find_element(wrench2_img, "image", 0.9, crop=equip_crop):
+                                log.info("检测到拆装扳手2，尝试使用拆装扳手2")
+                                try_equip(result_wrench2, aglaea_position)
+                                self.shoe_count = 0
+                                result = auto.find_element(boots_img, "image", 0.9, crop=equip_crop)
+                                if result:
+                                    log.info("尝试装备反重力皮靴")
+                                    try_equip(result, aglaea_position)
+                                    self.shoe_count += 2
+                            elif result_wrench := auto.find_element(wrench_img, "image", 0.9, crop=equip_crop):
                                 log.info("检测到拆装扳手，尝试使用拆装扳手")
                                 try_equip(result_wrench, aglaea_position)
                                 self.shoe_count = 0
@@ -1812,7 +1825,20 @@ class CurrencyWars:
         self._log_character_status()
 
         # 特殊会弹窗角色
-        star_characters = {"星期日", "花火", "大丽花", "知更鸟", "黑天鹅", "银狼LV.999"}
+        # 盛会之星角色
+        star_characters = {"加拉赫", "大丽花", "花火", "星期日", "知更鸟", "黑天鹅"}
+        # 命运卜者角色
+        star_characters.add("黑天鹅")
+        # 我来当策划角色
+        star_characters.add("银狼LV.999")
+        # 祈愿试炼角色
+        star_characters.update({"远坂凛", "吉尔伽美什", "Saber", "Archer"})
+        # 选择伙伴角色
+        star_characters.update({"姬子·启行", "丹恒·饮月", "星期日", "瓦尔特", "姬子", "三月七"})
+        remembrance_trailblazer_name = self.get_remembrance_trailblazer_name()
+        if remembrance_trailblazer_name:
+            star_characters.add(remembrance_trailblazer_name)
+
         if list2[i2].name in star_characters or list1[i1].name in star_characters:
             time.sleep(4)  # 等待选择框出现
         self.check_festival_star_popup()
@@ -1822,42 +1848,60 @@ class CurrencyWars:
         """
         检查是否弹出盛会之星或命运卜者等内容的选择框
         """
-        result = auto.get_single_line_text(crop=(936.0 / 1920, 52.0 / 1080, 219.0 / 1920, 53.0 / 1080))
-        if result:
-            if "盛会之星" in result:
-                log.info("检测到盛会之星")
-                char_crop = (816.0 / 1920, 165.0 / 1080, 222.0 / 1920, 202.0 / 1080)
-                auto.click_element(char_crop, "crop")
-                time.sleep(0.5)
-                auto.click_element("确认选择", "text", crop=(1428.0 / 1920, 539.0 / 1080, 124.0 / 1920, 46.0 / 1080))
-                time.sleep(0.5)
-            elif "命运卜者" in result:
-                log.info("检测到命运卜者")
-                char_crop = (850.0 / 1920, 167.0 / 1080, 395.0 / 1920, 249.0 / 1080)
-                auto.click_element(char_crop, "crop")
-                time.sleep(0.5)
-                char_crop_pos = [
-                    (800.0 / 1920, 372.0 / 1080, 25.0 / 1920, 36.0 / 1080),
-                    (1208.0 / 1920, 371.0 / 1080, 25.0 / 1920, 36.0 / 1080),
-                    (1617.0 / 1920, 373.0 / 1080, 24.0 / 1920, 35.0 / 1080)
-                ]
-                for pos in char_crop_pos:
-                    result = auto.get_single_line_text(crop=pos)
-                    if result:
-                        # 优先选择0费
-                        if result.isdigit() and int(result) == 0:
-                            auto.click_element(pos, "crop")
-                            time.sleep(0.5)
-                            break
-                auto.click_element("确认选择", "text", crop=(1329.0 / 1920, 572.0 / 1080, 332.0 / 1920, 55.0 / 1080))
-                time.sleep(0.5)
-            elif "我来当策划" in result:
-                log.info("检测到我来当策划")
-                choose_crop = (564 / 1920, 191 / 1080, 449 / 1920, 225 / 1080)
-                auto.click_element(choose_crop, "crop")
-                time.sleep(0.5)
-                auto.click_element("确认选择", "text", crop=(1424 / 1920, 573 / 1080, 134 / 1920, 51 / 1080))
-                time.sleep(0.5)
+        for _ in range(5):
+            result = auto.get_single_line_text(crop=(936.0 / 1920, 52.0 / 1080, 219.0 / 1920, 53.0 / 1080))
+            if result:
+                if "盛会之星" in result:
+                    log.info("检测到盛会之星")
+                    char_crop = (816.0 / 1920, 165.0 / 1080, 222.0 / 1920, 202.0 / 1080)
+                    auto.click_element(char_crop, "crop")
+                    time.sleep(0.5)
+                    auto.click_element("确认选择", "text", crop=(1428.0 / 1920, 539.0 / 1080, 124.0 / 1920, 46.0 / 1080))
+                elif "命运卜者" in result:
+                    log.info("检测到命运卜者")
+                    char_crop = (850.0 / 1920, 167.0 / 1080, 395.0 / 1920, 249.0 / 1080)
+                    auto.click_element(char_crop, "crop")
+                    time.sleep(0.5)
+                    char_crop_pos = [
+                        (800.0 / 1920, 372.0 / 1080, 25.0 / 1920, 36.0 / 1080),
+                        (1208.0 / 1920, 371.0 / 1080, 25.0 / 1920, 36.0 / 1080),
+                        (1617.0 / 1920, 373.0 / 1080, 24.0 / 1920, 35.0 / 1080)
+                    ]
+                    for pos in char_crop_pos:
+                        result = auto.get_single_line_text(crop=pos)
+                        if result:
+                            # 优先选择0费
+                            if result.isdigit() and int(result) == 0:
+                                auto.click_element(pos, "crop")
+                                time.sleep(0.5)
+                                break
+                    auto.click_element("确认选择", "text", crop=(1329.0 / 1920, 572.0 / 1080, 332.0 / 1920, 55.0 / 1080))
+                elif "我来当策划" in result:
+                    log.info("检测到我来当策划")
+                    choose_crop = (564 / 1920, 191 / 1080, 449 / 1920, 225 / 1080)
+                    auto.click_element(choose_crop, "crop")
+                    time.sleep(0.5)
+                    auto.click_element("确认选择", "text", crop=(1424 / 1920, 573 / 1080, 134 / 1920, 51 / 1080))
+                elif "祈愿试炼" in result:
+                    log.info("检测到祈愿试炼")
+                    choose1_crop = (458 / 1920, 179 / 1080, 448 / 1920, 339 / 1080)
+                    choose2_crop = (1189 / 1920, 187 / 1080, 441 / 1920, 332 / 1080)
+                    auto.click_element(choose1_crop, "crop")
+                    time.sleep(0.5)
+                    auto.click_element("确认选择", "text", crop=(1425 / 1920, 614 / 1080, 138 / 1920, 52 / 1080))
+                elif "选择伙伴" in result:
+                    log.info("检测到选择伙伴")
+                    choose1_crop = (936 / 1920, 165 / 1080, 222 / 1920, 265 / 1080)
+                    choose2_crop = (817 / 1920, 166 / 1080, 221 / 1920, 265 / 1080)
+                    auto.click_element(choose1_crop, "crop")
+                    time.sleep(0.5)
+                    auto.click_element(choose2_crop, "crop")
+                    time.sleep(0.5)
+                    auto.click_element("确认选择", "text", crop=(1423 / 1920, 572 / 1080, 135 / 1920, 50 / 1080))
+                time.sleep(2)
+                continue
+            else:
+                break
 
     def identify_current_stage(self):
         """
@@ -2012,7 +2056,7 @@ class CurrencyWars:
         购买经验
         """
         if cfg.currencywars_strategy == "aglaea" and self.current_level == 9:
-            log.info("当前等级9，策略为阿格莱亚，跳过购买经验")
+            log.info("当前等级9，策略为阿格莱雅，跳过购买经验")
             return
         if cfg.currencywars_strategy == "seele":
             if not self.has_seele and self.current_level >= 6:
@@ -2033,7 +2077,7 @@ class CurrencyWars:
                 log.debug(f"缓存角色等级信息: 当前等级 {self.current_level}")
 
             if cfg.currencywars_strategy == "aglaea" and self.current_level == 9:
-                log.info("当前等级9，策略为阿格莱亚，跳过购买经验")
+                log.info("当前等级9，策略为阿格莱雅，跳过购买经验")
                 break
             if cfg.currencywars_strategy == "seele":
                 if not self.has_seele and self.current_level >= 6:
@@ -2091,7 +2135,7 @@ class CurrencyWars:
         检查当前货币数量
         """
         money_crop = (1559.0 / 1920, 880.0 / 1080, 127.0 / 1920, 82.0 / 1080)
-        money = auto.get_single_line_text(crop=money_crop, blacklist=['V'])
+        money = auto.get_single_line_text(crop=money_crop, blacklist=['V', '?'])
         if money:
             try:
                 money_int = int(money)
@@ -2142,8 +2186,8 @@ class CurrencyWars:
             log.info(f"检测到为「阿哈」选择装备，尝试点击")
         else:
             log.info(f"检测到{auto.matched_text}，尝试点击")
-        if cfg.currencywars_strategy == "aglaea" and self.shoe_count < 4 and auto.click_element("轮滑鞋", "text", crop=(535 / 1920, 268 / 1080, 1129 / 1920, 45 / 1080), include=True):
-            log.info("检测到轮滑鞋选项，尝试点击")
+        if cfg.currencywars_strategy == "aglaea" and self.shoe_count < 4 and auto.click_element(("反重力皮靴", "轮滑鞋"), "text", crop=(535 / 1920, 268 / 1080, 1129 / 1920, 45 / 1080), include=True):
+            log.info(f"检测到{auto.matched_text}选项，尝试点击")
         elif cfg.currencywars_strategy == "seele" and not self.allow_seele_equip_weapons:
             # 希儿策略：缺失初级装备优先级最高
             seele_equip_priority = list(self.seele_missing_basic_equips)
@@ -2156,6 +2200,12 @@ class CurrencyWars:
             if self.seele_chainsaw_count < 1:
                 if "幸运星" not in seele_equip_priority:
                     seele_equip_priority.append("幸运星")
+            if self.seele_firestorm_count < 2:
+                if "火力风暴潮" not in seele_equip_priority:
+                    seele_equip_priority.append("火力风暴潮")
+            if self.seele_chainsaw_count < 1:
+                if "高周波电锯" not in seele_equip_priority:
+                    seele_equip_priority.append("高周波电锯")
             if seele_equip_priority and auto.click_element(tuple(seele_equip_priority), "text", crop=(535 / 1920, 268 / 1080, 1129 / 1920, 45 / 1080)):
                 log.info(f"检测到{auto.matched_text}选项，尝试点击")
             else:
@@ -2719,8 +2769,8 @@ class CurrencyWars:
                 preferred_characters.extend(["星期日", "符玄", "银狼", "花火", "风堇", "藿藿", "缇宝"])
                 refresh_pos = (1343 / 1920, 959 / 1080, 158 / 1920, 46 / 1080)
                 for _ in range(5):
-                    if self.shoe_count < 4 and auto.click_element("轮滑鞋", "text", crop=(84 / 1920, 620 / 1080, 1749 / 1920, 164 / 1080)):
-                        log.info("检测到轮滑鞋选项，尝试点击")
+                    if self.shoe_count < 4 and auto.click_element(("反重力皮靴", "轮滑鞋"), "text", crop=(84 / 1920, 620 / 1080, 1749 / 1920, 164 / 1080)):
+                        log.info(f"检测到{auto.matched_text}选项，尝试点击")
                         has_choose = True
                         time.sleep(1)
                         break

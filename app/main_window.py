@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QSize, QFileSystemWatcher, Signal, QObject
+from PySide6.QtCore import Qt, QSize, QPoint, QFileSystemWatcher, Signal, QObject
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QLabel
 
@@ -160,14 +160,16 @@ class MainWindow(MSFluentWindow):
         self.splashScreen.titleBar.maxBtn.setHidden(True)
         self.splashScreen.raise_()
 
-        screen = QApplication.primaryScreen().availableGeometry()
-        w, h = screen.width(), screen.height()
+        primary_screen = QApplication.primaryScreen().availableGeometry()
+        w, h = primary_screen.width(), primary_screen.height()
 
         saved_x = cfg.get_value('window_x', None)
         saved_y = cfg.get_value('window_y', None)
 
         if window_memory in ('position', 'size_and_position') and saved_x is not None and saved_y is not None:
-            # 确保窗口在屏幕可见范围内（当窗口比屏幕大时退回到左上角）
+            # 尝试找到保存位置所在的屏幕，找不到则回退到主屏幕
+            target_screen = QApplication.screenAt(QPoint(int(saved_x), int(saved_y)))
+            screen = target_screen.availableGeometry() if target_screen else primary_screen
             max_x = max(screen.left(), screen.right() - self.width())
             max_y = max(screen.top(), screen.bottom() - self.height())
             restored_x = max(screen.left(), min(int(saved_x), max_x))
@@ -255,6 +257,8 @@ class MainWindow(MSFluentWindow):
         signalBus.uiLanguageChanged.connect(self._on_ui_language_changed)
         # 连接任务完成信号
         self.logInterface.taskFinished.connect(self._onTaskFinished)
+        # 连接自动对话切换信号
+        self.logInterface.autoplotToggleRequested.connect(self._onAutoplotToggleRequested)
 
     def initNavigation(self):
         self.addSubInterface(self.homeInterface, FIF.HOME, tr('主页'))
@@ -428,6 +432,13 @@ class MainWindow(MSFluentWindow):
         """处理热键配置改变信号"""
         if hasattr(self, 'logInterface'):
             self.logInterface.updateHotkey()
+        if hasattr(self, 'toolsInterface'):
+            self.toolsInterface.automaticPlotCard.updateHotkeyHint()
+
+    def _onAutoplotToggleRequested(self):
+        """处理自动对话切换请求（全局热键触发）"""
+        if hasattr(self, 'toolsInterface'):
+            self.toolsInterface.toggleAutoPlot()
 
     def _on_ui_language_changed(self, lang_code: str):
         """热重载 UI 语言，无需重启。
