@@ -165,7 +165,7 @@ class Redemption:
             log.hr("完成", 2)
             return False
 
-        log.info(f"当前服务器类型为{"国服" if server == "cn" else "国际服"}，找到{len(codes)}个有效兑换码，开始尝试兑换")
+        log.info(f"当前服务器类型为{'国服' if server == 'cn' else '国际服'}，找到{len(codes)}个有效兑换码，开始尝试兑换")
         log.hr("完成", 2)
         return Redemption.start(codes=codes, send_notification=True)
 
@@ -221,7 +221,8 @@ class Redemption:
                     time.sleep(3)
 
         if successful_codes:
-            msg = f"成功使用了{len(successful_codes)}个兑换码: \n{'\n'.join(successful_codes)}"
+            joined_lines = "\n".join(successful_codes)
+            msg = f"成功使用了{len(successful_codes)}个兑换码: \n{joined_lines}"
             msg_parts = msg.split('\n')
             for part in msg_parts:
                 if part.strip():  # 确保非空字符串

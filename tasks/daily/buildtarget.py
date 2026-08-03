@@ -516,7 +516,8 @@ class BuildTarget:
 
         if BuildTarget._target_instances:
             lines = [f"{t} - {', '.join(names)}" for t, names in BuildTarget._target_instances.items()]
-            message = f"培养目标{BuildTarget._build_target_name or 'None'}的待刷副本:\n{"\n".join(lines)}"
+            joined_lines = "\n".join(lines)
+            message = f"培养目标{BuildTarget._build_target_name or 'None'}的待刷副本:\n{joined_lines}"
             Base.send_notification_with_screenshot(message, NotificationLevel.ALL, screenshot)
         else:
             Base.send_notification_with_screenshot("未能获取到任何培养目标副本信息，回退至默认的设置", NotificationLevel.ERROR)
