@@ -11,11 +11,13 @@ from .card.comboboxsettingcard1 import ComboBoxSettingCard1
 from .card.comboboxsettingcard2 import ComboBoxSettingCard2, ComboBoxSettingCardUpdateSource, ComboBoxSettingCardLog, ComboBoxSettingCardLanguage
 from .card.switchsettingcard1 import SwitchSettingCard1, SwitchSettingCardWithAction, TimestampSwitchSettingCard, SwitchSettingCardTeam, SwitchSettingCardImmersifier, SwitchSettingCardGardenofplenty, SwitchSettingCardEchoofwar, SwitchSettingCardHotkey, SwitchSettingCardCloudGameStatus
 from .card.autostart_setting_card import AutostartSettingCard
+from .card.game_path_setting_card import GamePathSettingCard
 from .card.rangesettingcard1 import RangeSettingCard1
 from .card.pushsettingcard1 import CustomPushSettingCard, DualPushSettingCard, TriplePushSettingCard, PushSettingCardAction, PushSettingCardInstance, PushSettingCardInstanceChallengeCount, PushSettingCardNotifyTemplate, PushSettingCardMirrorchyan, PushSettingCardStr, PushSettingCardEval, PushSettingCardDate, PushSettingCardKey, PushSettingCardTeam, PushSettingCardFriends, PushSettingCardTeamWithSwap, PushSettingCardPowerPlan, InstanceTeamSettingCard
 from .card.timepickersettingcard1 import TimePickerSettingCard1
 from .card.expandable_switch_setting_card import ExpandableSwitchSettingCard, ExpandableWeeklyRelicSettingCard, ExpandableTimestampSwitchSettingCard, ExpandableComboBoxSettingCardUpdateSource, ExpandableComboBoxSettingCard, ExpandableComboBoxSettingCardInstanceType, ExpandableSwitchSettingCardEchoofwar
 from .card.messagebox_custom import MessageBoxEdit
+from .challenge_config_dialog import ChallengeConfigCard
 from .card.stationprioritysettingcard import StationPrioritySettingCard
 from module.config import cfg
 from module.notification import init_notifiers
@@ -24,6 +26,8 @@ from module.localization.languages import AUTO_LANGUAGE, available_languages
 from tasks.weekly.divergent_universe import DivergentUniverse
 from tasks.base.tasks import start_task
 from .tools.check_update import checkUpdate
+from .tools.agent_prompt import build_agent_prompt
+from utils import clipboard
 import os
 import random
 import sys
@@ -897,17 +901,9 @@ class SettingInterface(ScrollArea):
             tr("上次运行虚构叙事的时间"),
             ""
         )
-        self.purefictionLevelCard = PushSettingCardEval(
-            tr('修改'),
-            UiIcon.FILTER,
-            tr("关卡范围"),
-            "purefiction_level"
-        )
-        self.purefictionTeamsCard = PushSettingCardTeamWithSwap(
+        self.purefictionConfigCard = ChallengeConfigCard(
             UiIcon.PEOPLE_TEAM,
-            tr("虚构叙事队伍配置"),
-            "purefiction_team1",
-            "purefiction_team2"
+            tr("虚构叙事配置"), "purefiction", 4
         )
         self.ApocalypticEnableCard = ExpandableTimestampSwitchSettingCard(
             "apocalyptic_enable",
@@ -1045,12 +1041,7 @@ class SettingInterface(ScrollArea):
             "",
             texts={tr('简洁'): 'INFO', tr('详细'): 'DEBUG'}
         )
-        self.gamePathCard = PushSettingCard(
-            tr('修改'),
-            FIF.GAME,
-            tr("游戏路径"),
-            cfg.game_path
-        )
+        self.gamePathCard = GamePathSettingCard()
         self.updateViaLauncherEnableCard = ExpandableSwitchSettingCard(
             "update_via_launcher",
             FIF.UPDATE,
@@ -2518,6 +2509,22 @@ class SettingInterface(ScrollArea):
             tr("默认开启，可以避免悬浮窗等干扰"),
             "use_background_screenshot"
         )
+        self.localControlModeCard = ExpandableComboBoxSettingCard(
+            'local_control_mode', FIF.GAME, tr('本地操作模式'),
+            tr('后台操作遇到鼠标干扰时会等待并重试；滚轮临时切前台，下次启动任务生效。'),
+            texts={tr('前台'): 'foreground', tr('后台'): 'background'},
+            confirm=self.__confirmLocalControlMode,
+        )
+        self.backgroundMouseProtectionCard = SwitchSettingCard1(
+            FIF.GAME, tr('重试失败时短暂锁定鼠标'),
+            tr('仅保护必要的鼠标操作，保留键盘和暂停热键。'),
+            'background_mouse_protection',
+        )
+        self.localControlModeCard.addSettingCard(self.backgroundMouseProtectionCard)
+        def refresh_mouse_protection_option(*_args):
+            self.backgroundMouseProtectionCard.setEnabled(cfg.get_value('local_control_mode') == 'background')
+        self.localControlModeCard.currentIndexChanged.connect(refresh_mouse_protection_option)
+        refresh_mouse_protection_option()
         if sys.platform == 'win32':
             self.autostartCard = AutostartSettingCard(
                 FIF.GAME,
@@ -2543,6 +2550,12 @@ class SettingInterface(ScrollArea):
             FIF.GITHUB,
             tr('项目主页'),
             "https://github.com/moesnow/March7thAssistant"
+        )
+        self.agentPromptCard = PrimaryPushSettingCard(
+            tr('复制提示词'),
+            FIF.ROBOT,
+            tr('AI 助手'),
+            tr('复制一段提示词发给 DeepSeek Harness、Codex、Claude Code 等 AI 助手，让它学会操作三月七小助手')
         )
         self.bilibiliCard = PrimaryPushSettingCard(
             tr('立即前往'),
@@ -2779,8 +2792,7 @@ class SettingInterface(ScrollArea):
 
         self.ImmortalGameGroup.addSettingCard(self.purefictionEnableCard)
         self.purefictionEnableCard.addSettingCards([
-            self.purefictionLevelCard,
-            self.purefictionTeamsCard
+            self.purefictionConfigCard
         ])
 
         self.ImmortalGameGroup.addSettingCard(self.ApocalypticEnableCard)
@@ -2851,12 +2863,14 @@ class SettingInterface(ScrollArea):
         self.MiscGroup.addSettingCard(self.autoSetResolutionEnableCard)
         self.MiscGroup.addSettingCard(self.autoSetGamePathEnableCard)
         self.MiscGroup.addSettingCard(self.useBackgroundScreenshotCard)
+        self.MiscGroup.addSettingCard(self.localControlModeCard)
         if sys.platform == 'win32':
             self.MiscGroup.addSettingCard(self.autostartCard)
             self.MiscGroup.addSettingCard(self.debugModeEnableCard)
         self.MiscGroup.addSettingCard(self.hotkeyCard)
 
         self.AboutGroup.addSettingCard(self.githubCard)
+        self.AboutGroup.addSettingCard(self.agentPromptCard)
         self.AboutGroup.addSettingCard(self.bilibiliCard)
         self.AboutGroup.addSettingCard(self.qqGroupCard)
         # self.AboutGroup.addSettingCard(self.feedbackCard)
@@ -2877,6 +2891,7 @@ class SettingInterface(ScrollArea):
             self.autoSetResolutionEnableCard.setHidden(True)
             self.autoSetGamePathEnableCard.setHidden(True)
             self.useBackgroundScreenshotCard.setHidden(True)
+            self.localControlModeCard.setHidden(True)
             self.cloudGameEnableCard.setDisabled(True)  # 在配置文件中强制启用，禁止用户修改
 
         self.addSubInterface(self.PowerGroup, 'PowerInterface', tr('体力'))
@@ -2948,8 +2963,10 @@ class SettingInterface(ScrollArea):
         self.notifyMasterEnableCard.switchChanged.connect(self.__refreshNotifiers)
 
         connect_expand_state(self.afterFinishCard)
+        connect_expand_state(self.localControlModeCard)
 
         self.githubCard.clicked.connect(self.__openUrl("https://github.com/moesnow/March7thAssistant"))
+        self.agentPromptCard.clicked.connect(self.__copyAgentPrompt)
         self.qqGroupCard.clicked.connect(self.__openUrl("https://qm.qq.com/q/C3IryUWCQw"))
         # self.feedbackCard.clicked.connect(self.__openUrl("https://github.com/moesnow/March7thAssistant/issues"))
         self.bilibiliCard.clicked.connect(self.__openUrl("https://space.bilibili.com/3706960664857075"))
@@ -2973,6 +2990,7 @@ class SettingInterface(ScrollArea):
         connect_expand_state(self.forgottenhallEnableCard)
         connect_expand_state(self.purefictionEnableCard)
         connect_expand_state(self.ApocalypticEnableCard)
+        connect_expand_state(self.gamePathCard)
         connect_expand_state(self.updateViaLauncherEnableCard)
         connect_expand_state(self.updateSourceCard)
         connect_expand_state(self.notifyMasterEnableCard)
@@ -3007,6 +3025,25 @@ class SettingInterface(ScrollArea):
 
         self._ignoreUniverseEnableCardSwitchChanged = True
         self.universeEnableCard.switchButton.setChecked(False)
+
+    def __confirmLocalControlMode(self, value):
+        """切换到后台模式前说明限制；确认后才写入配置，取消则保留原模式。"""
+        if value != 'background':
+            return True
+        confirm = MessageBox(
+            tr("启用后台模式前请确认"),
+            tr("后台模式下，任务运行时你可以继续使用电脑，但仍有以下限制：\n\n"
+               "• 点击和拖动会短暂借用鼠标，完成后归还；你正在移动鼠标时，任务会等鼠标停下再操作。\n"
+               "• 在大世界中按键时，光标会被短暂锁定在游戏窗口中央。\n"
+               "• 需要滚轮时会临时把游戏切到前台，完成后恢复原来的窗口。\n"
+               "• 游戏窗口可以放在其他窗口后面，但不能最小化；运行期间请保持系统解锁。\n"
+               "• 锄大地、第三方模拟宇宙等独立程序不受此设置影响，仍需前台运行。\n\n"
+               "设置在下次启动任务时生效，自动对话需重新开启。完整说明见使用文档“后台运行”。"),
+            self.window()
+        )
+        confirm.yesButton.setText(tr("我已了解，启用后台模式"))
+        confirm.cancelButton.setText(tr("取消"))
+        return bool(confirm.exec())
 
     def __onCheckUpdateCardSwitchChanged(self, isChecked: bool):
         if self._ignoreCheckUpdateCardSwitchChanged:
@@ -3360,6 +3397,29 @@ class SettingInterface(ScrollArea):
 
     def __openUrl(self, url):
         return lambda: QDesktopServices.openUrl(QUrl(url))
+
+    def __copyAgentPrompt(self):
+        try:
+            clipboard.copy(build_agent_prompt())
+            InfoBar.success(
+                title=tr('复制成功(＾∀＾●)'),
+                content=tr("粘贴给你的 AI 助手即可"),
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
+        except Exception:
+            InfoBar.warning(
+                title=tr('复制失败(╥╯﹏╰╥)'),
+                content="",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self
+            )
 
     # def __showRestartTooltip(self):
     #     InfoBar.success(
