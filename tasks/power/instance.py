@@ -1,3 +1,4 @@
+from utils.game_options import game_option_enabled
 from module.screen import screen
 from module.automation import auto
 from module.logger import log
@@ -5,6 +6,7 @@ from module.config import cfg
 from module.notification.notification import NotificationLevel
 from tasks.base.base import Base
 from tasks.base.team import Team
+from tasks.base.list_drag import drag_list
 from .character import Character
 from .relicset import Relicset
 import time
@@ -91,8 +93,9 @@ class Instance:
         instance_type_crop = (262.0 / 1920, 289.0 / 1080, 422.0 / 1920, 624.0 / 1080)
 
         if not auto.click_element(instance_type, "text", crop=instance_type_crop):
-            if auto.click_element("凝滞虚影", "text", max_retries=10, crop=instance_type_crop):
-                auto.mouse_scroll(12, -1)
+            if auto.find_element("凝滞虚影", "text", max_retries=10, crop=instance_type_crop):
+                if not drag_list(auto, (645 / 1920, 805 / 1080), (645 / 1920, 405 / 1080), crop=instance_type_crop):
+                    return False
                 # 等待界面完全停止
                 time.sleep(1)
                 auto.click_element(instance_type, "text", crop=instance_type_crop)
@@ -148,7 +151,8 @@ class Instance:
                     if instance_name in template.get(instance_type, {}):
                         instance_name = template[instance_type][instance_name]
                 break
-            auto.mouse_scroll(12, -1)
+            if not drag_list(auto, (1125 / 1920, 810 / 1080), (1125 / 1920, 410 / 1080), crop=instance_name_crop):
+                return False
             # 等待界面完全停止
             time.sleep(1)
         if not Flag:
@@ -214,14 +218,15 @@ class Instance:
                             log.info(f"尝试切换到{team_name}")
                             time.sleep(1.0)
                             team_name_crop = (6 / 1920, 116 / 1080, 300 / 1920, 900 / 1080)
-                            auto.click_element((38 / 1920, 128 / 1080, 521 / 1920, 196 / 1080), "crop", action="move")
                             time.sleep(1.0)
-                            for _ in range(4):  # 尝试滚动寻找队伍
+                            for _ in range(8):
                                 if auto.click_element(team_name, "text", max_retries=4, retry_delay=0.5, crop=team_name_crop):
                                     log.info(f"切换到{team_name}成功")
                                     break
                                 log.info(f"未找到{team_name}，尝试滚动")
-                                auto.mouse_scroll(28, -1, False)
+                                if not drag_list(auto, (430 / 1920, 850 / 1080), (430 / 1920, 350 / 1080),
+                                                 crop=(38 / 1920, 128 / 1080, 521 / 1920, 820 / 1080), duration=1.0):
+                                    return False
                                 time.sleep(1)
                             time.sleep(1.0)
                             auto.press_key("esc")
@@ -425,7 +430,7 @@ class Instance:
                 log.info("战斗失败")
                 log.info(f"获取剩余体力并重新计算轮次")
                 return False
-            elif cfg.auto_battle_detect_enable and auto.find_element("./assets/images/share/base/not_auto.png", "image", 0.9, crop=(0.0 / 1920, 903.0 / 1080, 144.0 / 1920, 120.0 / 1080)):
+            elif game_option_enabled(cfg, "auto_battle_detect_enable") and auto.find_element("./assets/images/share/base/not_auto.png", "image", 0.9, crop=(0.0 / 1920, 903.0 / 1080, 144.0 / 1920, 120.0 / 1080)):
                 log.info("尝试开启自动战斗")
                 auto.press_key(cfg.get_value("hotkey_auto_battle", "v"))
             elif auto.find_element("已处于无法战斗状态", "text", max_retries=1, include=True, threshold=0.7):

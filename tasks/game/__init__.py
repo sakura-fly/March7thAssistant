@@ -1,3 +1,4 @@
+from utils.game_options import game_option_enabled
 import os
 import sys
 import time
@@ -25,6 +26,7 @@ from module.ocr import ocr
 from module.localization import tr
 from utils.console import is_gui_started
 from utils.runs import describe_run, idle_without_run_lock
+from utils.temporary_graphics import begin_temporary_graphics, restore_temporary_graphics
 
 
 class GameClientOutdatedError(RuntimeError):
@@ -41,9 +43,9 @@ def wait_until(condition, timeout, period=1):
     return False
 
 
-def start():
+def start(headless=None, *, optimize_graphics=True):
     log.hr("开始运行", 0)
-    start_game()
+    start_game(headless=headless, optimize_graphics=optimize_graphics)
     log.hr("完成", 2)
 
 
@@ -55,12 +57,17 @@ def switch_to_game():
 
 
 def ensure_game_ready():
-    """校验游戏窗口存在并切换到前台（workflow 执行前置）。
+    """连接云游戏会话，或校验本地游戏窗口可操作（workflow 执行前置）。
 
     与流程编排启动语义一致：游戏未启动或切换失败时记录错误并返回 False，
     由调用方决定如何终止（本地与云游戏均经 controller 处理）。
     """
     controller = get_game_controller()
+    if cfg.cloud_game_enable:
+        if not controller.connect_to_running_game():
+            log.error("云游戏会话未就绪，workflow 未执行")
+            return False
+        return True
     if not controller.is_game_running():
         log.error("未检测到游戏窗口，workflow 未执行")
         return False
@@ -78,7 +85,7 @@ def ensure_game_ready():
     return True
 
 
-def start_game():
+def start_game(headless=None, *, optimize_graphics=True):
     MAX_RETRY = 3
 
     def check_and_click_enter():
@@ -176,12 +183,15 @@ def start_game():
             auto.input_handler.wait_for_window(WINDOW_WAIT_SECONDS)
         if not starrail.switch_to_game():
             try:
-                if cfg.auto_set_resolution_enable:
+                if game_option_enabled(cfg, "auto_set_resolution_enable"):
                     starrail.change_resolution(1920, 1080)
                     starrail.change_auto_hdr("disable")
 
-                if cfg.auto_battle_detect_enable:
+                if game_option_enabled(cfg, "auto_battle_detect_enable"):
                     starrail.change_auto_battle(True)
+
+                if optimize_graphics and game_option_enabled(cfg, "auto_lower_graphics_enable"):
+                    begin_temporary_graphics(starrail.game_path, log)
 
                 if not starrail.start_game_process():
                     raise RuntimeError("启动游戏失败")
@@ -192,6 +202,9 @@ def start_game():
 
                 time.sleep(10)
             finally:
+                # 游戏已读取临时值后尽早恢复持久配置，缩短强杀/断电的风险窗口。
+                # 备份保留到任务结束，届时再次检查可能的游戏写回。
+                restore_temporary_graphics()
                 starrail.restore_resolution()
                 starrail.restore_auto_hdr()
             # starrail.check_resolution_ratio(1920, 1080)
@@ -217,7 +230,7 @@ def start_game():
             time.sleep(1)
 
     def start_cloud_game():
-        if not cloud_game.start_game_process():
+        if not cloud_game.start_game_process(headless=headless):
             raise ConnectionError("启动或连接浏览器失败")
         if not cloud_game.is_in_game():
             if not cloud_game.enter_cloud_game():
@@ -297,40 +310,19 @@ def stop(detect_loop=False):
         ocr.exit_ocr()
         if cfg.after_finish in ["Exit", "Loop", "Shutdown", "Sleep", "Hibernate", "Restart", "Logoff", "TurnOffDisplay", "RunScript"]:
             get_game_controller().shutdown(cfg.after_finish)
+        restore_temporary_graphics(final=True)
         log.hr("完成", 2)
         if cfg.after_finish not in ["Shutdown", "Sleep", "Hibernate", "Restart", "Logoff", "TurnOffDisplay", "RunScript"]:
             pause_on_success()
         sys.exit(0)
 
 
-def after_finish_is_loop(force_scheduled=False):
-
-    def get_wait_time(current_power):
-        # 距离体力到达配置文件指定的上限剩余秒数
-        wait_time_power_limit = (cfg.power_limit - current_power) * 6 * 60
-        # 距离第二天凌晨4点剩余秒数，+30避免显示3点59分不美观，#7
-        wait_time_next_day = Date.get_time_next_x_am(cfg.refresh_hour) + 30
-        # 取最小值
-        wait_time = min(wait_time_power_limit, wait_time_next_day)
-        return wait_time
-
-    if not force_scheduled and cfg.loop_mode == "power":
-        current_power = Power.get(use_supplement=False)
-        if current_power >= cfg.power_limit:
-            log.info(f"开拓力 >= {cfg.power_limit}")
-            log.info("即将再次运行")
-            log.hr("完成", 2)
-            notif.flush_batch()
-            return
-        else:
-            get_game_controller().stop_game()
-            wait_time = get_wait_time(current_power)
-            future_time = Date.calculate_future_time(wait_time)
-    else:
-        get_game_controller().stop_game()
-        scheduled_time = cfg.scheduled_time
-        wait_time = Date.time_to_seconds(scheduled_time)
-        future_time = Date.calculate_future_time(scheduled_time)
+def after_finish_is_loop():
+    get_game_controller().stop_game()
+    restore_temporary_graphics(final=True)
+    scheduled_time = cfg.scheduled_time
+    wait_time = Date.time_to_seconds(scheduled_time)
+    future_time = Date.calculate_future_time(scheduled_time)
 
     # 图形界面不支持循环模式，提前检查并退出
     if is_gui_started():
@@ -371,8 +363,7 @@ def wait_after_cloud_zero_duration(error):
     msg = cfg.notify_template['ErrorOccurred'].format(error=error)
     log.error(msg)
     notif.flush_batch(extra_content=msg, level=NotificationLevel.ERROR)
-    # 无法进入游戏读取开拓力，开拓力循环也改按定时时间等待
-    after_finish_is_loop(force_scheduled=True)
+    after_finish_is_loop()
     return True
 
 
