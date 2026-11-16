@@ -3475,10 +3475,11 @@ class SettingInterface(ScrollArea):
                 duration=3000,
                 parent=self
             )
-        except Exception:
+        except Exception as e:
+            print(e)
             InfoBar.warning(
                 title=tr('复制失败(╥╯﹏╰╥)'),
-                content="",
+                content=str(e),
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
