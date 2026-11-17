@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt, QUrl, QObject, QEvent, QPoint, QThread, Signal, QSignalBlocker
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt, QUrl, QObject, QEvent, QPoint, QThread, QTimer, Signal, QSignalBlocker
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import QWidget, QLabel, QFileDialog, QVBoxLayout, QStackedWidget, QSpacerItem, QScroller, QScrollerProperties, QScrollArea, QFrame, QApplication
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import SettingCardGroup, PushSettingCard, ScrollArea, InfoBar, InfoBarPosition, PrimaryPushSettingCard, MessageBox, PushButton, StateToolTip, ExpandSettingCard
@@ -147,6 +147,7 @@ class _PivotScrollFilter(QObject):
 class SettingInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._content_built = False
         try:
             self.parent = parent
             self._ignoreUniverseEnableCardSwitchChanged = False
@@ -160,19 +161,77 @@ class SettingInterface(ScrollArea):
 
             self.settingLabel = QLabel(tr("设置"), self)
 
-            self.__initWidget()
-            self.__initCard()
-            self.__initLayout()
-            self.__connectSignalToSlot()
-            self.__refreshBackendSettings(self.adbBackendCard.backend())
+            self.__initShell()
         except Exception:
             # 构造抛错时调用方还拿不到实例，必须在这里清理已建立的 Qt 父子关系。
             self.hide()
             self.deleteLater()
             raise
 
-    def __initWidget(self):
+    def __initShell(self):
+        """构造期只搭极轻的外壳，真正的设置卡片延后到首次进入设置页时构建。
+
+        整套设置页有近三百张卡片、两千多个控件，同步构建约 1.2 秒。它原本位于启动
+        关键路径上，是启动耗时最大的一块，因此在未进入设置页前不构建。
+        """
         self.setWidget(self.scrollWidget)
+        self.setWidgetResizable(True)
+        self.setViewportMargins(0, 140, 0, 5)
+        self.setObjectName('settingInterface')
+        self.scrollWidget.setObjectName('scrollWidget')
+        self.settingLabel.setObjectName('settingLabel')
+        self.settingLabel.move(36, 30)
+        StyleSheet.SETTING_INTERFACE.apply(self)
+
+        # 首次进入设置页时的占位提示：构建过程会阻塞主线程约 1 秒，先给出明确反馈。
+        self._loadingBox = QWidget(self.scrollWidget)
+        loading_layout = QVBoxLayout(self._loadingBox)
+        loading_layout.setContentsMargins(0, 0, 0, 0)
+        self._loadingLabel = QLabel(tr("正在加载设置…"), self._loadingBox)
+        self._loadingLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_font = QFont()
+        loading_font.setPointSize(11)
+        self._loadingLabel.setFont(loading_font)
+        self._loadingLabel.setStyleSheet("color: #8a8a8a; background: transparent;")
+        loading_layout.addWidget(self._loadingLabel, 0, Qt.AlignmentFlag.AlignCenter)
+        self.vBoxLayout.addWidget(self._loadingBox, 1)
+
+    def _ensureContentBuilt(self):
+        """构建设置页内容（幂等）。首次进入设置页时触发。"""
+        if self._content_built:
+            return
+        self._content_built = True
+
+        loading_box = getattr(self, '_loadingBox', None)
+        if loading_box is not None:
+            self._loadingBox = None
+            self._loadingLabel = None
+            self.vBoxLayout.removeWidget(loading_box)
+            loading_box.hide()
+            loading_box.deleteLater()
+
+        try:
+            self.__initWidget()
+            self.__initCard()
+            self.__initLayout()
+            self.__connectSignalToSlot()
+            self.__refreshBackendSettings(self.adbBackendCard.backend())
+            StyleSheet.SETTING_INTERFACE.apply(self)
+        except Exception:
+            # 构建失败时允许调用方回滚并用新实例重试（语言切换会整页替换）。
+            self._content_built = False
+            raise
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._content_built:
+            # 先让「正在加载设置…」绘制出来，再同步构建，避免点进来是一片空白。
+            QTimer.singleShot(30, self._ensureContentBuilt)
+
+    def __initWidget(self):
+        # 外壳阶段已 setWidget，重复设置会让 QScrollArea 重建 viewport 并丢失滚动位置。
+        if self.widget() is not self.scrollWidget:
+            self.setWidget(self.scrollWidget)
         self.setWidgetResizable(True)
         self.setViewportMargins(0, 140, 0, 5)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2975,6 +3034,9 @@ class SettingInterface(ScrollArea):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # pivotScrollArea 在内容构建后才存在；外壳阶段直接跳过。
+        if not self._content_built:
+            return
         # 随窗口宽度同步 pivot 滚动容器宽度（right margin = 40px 与布局对齐）
         if self.width() > 0:
             self.pivotScrollArea.setFixedWidth(max(self.width() - 40, 400))
@@ -2992,6 +3054,9 @@ class SettingInterface(ScrollArea):
         return cards
 
     def captureViewState(self):
+        # 语言切换等场景会先抓取旧页状态，此时若内容尚未构建则没有可保存的视图。
+        if not self._content_built:
+            return None
         return {
             'tab': self.stackedWidget.currentWidget().objectName(),
             'scroll': self.verticalScrollBar().value(),
@@ -3001,6 +3066,9 @@ class SettingInterface(ScrollArea):
         }
 
     def restoreViewState(self, state):
+        if not state:
+            return
+        self._ensureContentBuilt()
         for name, card in self._expandableCards().items():
             if name in state['expanded']:
                 card.setExpand(state['expanded'][name])

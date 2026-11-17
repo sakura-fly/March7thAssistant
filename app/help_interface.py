@@ -21,10 +21,47 @@ DOC_OF_TAB = {
     'changelogLabel': 'Changelog',
 }
 
+_LINK_CSS = """a {
+    color: #f18cb9;
+    font-weight: bold;
+}
+"""
+
+_TABLE_CSS = """table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  border: 1px solid black;
+  padding: 1px 30px 1px 30px;
+  text-align: left;
+  font-size: 15px;
+}
+"""
+
+
+def _md_style(*blocks):
+    """把若干段 CSS 拼成一个 <style> 块，与原内联样式完全等价。"""
+    return "<style>\n" + "\n".join(blocks) + "</style>\n"
+
 
 class HelpInterface(ScrollArea):
+    # 标签页 → 渲染方法。每个标签页的 markdown 只在首次切换到时渲染。
+    _DOC_BUILDERS = {
+        'tutorialLabel': '_buildTutorialDoc',
+        'workflowLabel': '_buildWorkflowDoc',
+        'faqLabel': '_buildFaqDoc',
+        'backgroundLabel': '_buildBackgroundDoc',
+        'tasksLabel': '_buildTasksDoc',
+        'changelogLabel': '_buildChangelogDoc',
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        # 已渲染的标签页与它们的 HTML，供主题切换/语言切换时复用，避免重复跑 markdown。
+        self._docContent = {}
+        self._builtDocs = set()
         self.scrollWidget = QWidget()
         self.vBoxLayout = QVBoxLayout(self.scrollWidget)
 
@@ -69,139 +106,70 @@ class HelpInterface(ScrollArea):
         scroller.setScrollerProperties(scroller_props)
 
     def __initCard(self):
-        tutorial_style = """
-<style>
-a {
-    color: #f18cb9;
-    font-weight: bold;
-}
+        """只渲染首个标签页；其余页在首次切换到时渲染。
 
-table {
-  border-collapse: collapse;
-  width: 100%;
-}
+        六个帮助页的 markdown 渲染在启动阶段要花两百多毫秒，而其中五页用户未必会看，
+        因此全部改为按需渲染。
+        """
+        self._ensureDocBuilt('tutorialLabel')
 
-th, td {
-  border: 1px solid black;
-  padding: 1px 30px 1px 30px;
-  text-align: left;
-  font-size: 15px;
-}
-</style>
-"""
-        from module.config import cfg
-        tutorial_file = self._get_localized_doc_path("Tutorial")
-        try:
-            with open(tutorial_file, 'r', encoding='utf-8') as file:
-                self.content = self._site_links(file.read())
-                self.content = '\n'.join(self.content.split('\n')[1:])
-        except FileNotFoundError:
-            sys.exit(1)
-        self.tutorial_content = tutorial_style + markdown.markdown(self.content, extensions=['tables']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
+    def _ensureDocBuilt(self, name):
+        """按需渲染单个帮助页（幂等）。"""
+        if name in self._builtDocs:
+            return
+        method = self._DOC_BUILDERS.get(name)
+        if method is None:
+            return
+        self._builtDocs.add(name)
+        self._docContent[name] = getattr(self, method)()
+        self._applyDoc(name)
 
+    def _applyDoc(self, name):
+        """把已渲染的 HTML 写入对应标签页，暗色主题下修正表格边框颜色。"""
+        html = self._docContent.get(name)
+        if html is None:
+            return
+        label = getattr(self, name)
         if qconfig.theme.name == "DARK":
-            self.tutorialLabel.setText(self.tutorial_content.replace("border: 1px solid black;", "border: 1px solid white;"))
+            label.setText(html.replace("border: 1px solid black;", "border: 1px solid white;"))
         else:
-            self.tutorialLabel.setText(self.tutorial_content)
-        self.tutorialLabel.setOpenExternalLinks(True)
+            label.setText(html)
+        label.setOpenExternalLinks(True)
 
-        workflow_file = self._get_localized_doc_path("Workflow")
+    def _read_doc(self, base_name, skip_lines=1, site_links=False):
+        path = self._get_localized_doc_path(base_name)
         try:
-            with open(workflow_file, 'r', encoding='utf-8') as file:
-                self.content = file.read()
-                self.content = '\n'.join(self.content.split('\n')[1:])
+            with open(path, 'r', encoding='utf-8') as file:
+                content = file.read()
         except FileNotFoundError:
             sys.exit(1)
-        self.workflow_content = tutorial_style + markdown.markdown(self.content, extensions=['tables']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
+        if site_links:
+            content = self._site_links(content)
+        return '\n'.join(content.split('\n')[skip_lines:])
 
-        if qconfig.theme.name == "DARK":
-            self.workflowLabel.setText(self.workflow_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.workflowLabel.setText(self.workflow_content)
-        self.workflowLabel.setOpenExternalLinks(True)
+    def _buildTutorialDoc(self):
+        content = self._read_doc("Tutorial", skip_lines=1, site_links=True)
+        return _md_style(_LINK_CSS, _TABLE_CSS) + markdown.markdown(content, extensions=['tables']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
 
-        faq_style = """
-<style>
-a {
-    color: #f18cb9;
-    font-weight: bold;
-}
-</style>
-"""
-        faq_file = self._get_localized_doc_path("FAQ")
-        try:
-            with open(faq_file, 'r', encoding='utf-8') as file:
-                self.content = file.read()
-                self.content = '\n'.join(self.content.split('\n')[2:])
-        except FileNotFoundError:
-            sys.exit(1)
-        faq_content = faq_style + markdown.markdown(self.content).replace('<h3>', '<br><h3>').replace('</h3>', '</h3><hr>').replace('<br>', '', 1) + '<br>'
-        self.faqLabel.setText(faq_content)
-        self.faqLabel.setOpenExternalLinks(True)
+    def _buildWorkflowDoc(self):
+        content = self._read_doc("Workflow", skip_lines=1)
+        return _md_style(_LINK_CSS, _TABLE_CSS) + markdown.markdown(content, extensions=['tables']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
 
-        background_file = self._get_localized_doc_path("Background")
-        try:
-            with open(background_file, 'r', encoding='utf-8') as file:
-                self.content = self._site_links(file.read())
-                self.content = '\n'.join(self.content.split('\n')[1:])
-        except FileNotFoundError:
-            sys.exit(1)
-        self.background_content = tutorial_style + markdown.markdown(self.content, extensions=['tables', 'fenced_code']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
+    def _buildFaqDoc(self):
+        content = self._read_doc("FAQ", skip_lines=2)
+        return _md_style(_LINK_CSS) + markdown.markdown(content).replace('<h3>', '<br><h3>').replace('</h3>', '</h3><hr>').replace('<br>', '', 1) + '<br>'
 
-        if qconfig.theme.name == "DARK":
-            self.backgroundLabel.setText(self.background_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.backgroundLabel.setText(self.background_content)
-        self.backgroundLabel.setOpenExternalLinks(True)
+    def _buildBackgroundDoc(self):
+        content = self._read_doc("Background", skip_lines=1, site_links=True)
+        return _md_style(_LINK_CSS, _TABLE_CSS) + markdown.markdown(content, extensions=['tables', 'fenced_code']).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
 
-        tasks_style = """
-<style>
-table {
-  border-collapse: collapse;
-  width: 100%;
-}
+    def _buildTasksDoc(self):
+        content = self._read_doc("TasksTable", skip_lines=1)
+        return _md_style(_TABLE_CSS) + markdown.markdown(content, extensions=['tables'])
 
-th, td {
-  border: 1px solid black;
-  padding: 1px 30px 1px 30px;
-  text-align: left;
-  font-size: 15px;
-}
-</style>
-"""
-        # Daily training tasks table - 多语言文档（assets/docs/TasksTable*.md，缺失时回退中文）
-        tasks_file = self._get_localized_doc_path("TasksTable")
-        try:
-            with open(tasks_file, 'r', encoding='utf-8') as file:
-                self.content = file.read()
-                self.content = '\n'.join(self.content.split('\n')[1:])
-        except FileNotFoundError:
-            sys.exit(1)
-        self.tasks_content = tasks_style + markdown.markdown(self.content, extensions=['tables'])
-
-        if qconfig.theme.name == "DARK":
-            self.tasksLabel.setText(self.tasks_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.tasksLabel.setText(self.tasks_content)
-
-        changelog_style = """
-<style>
-a {
-    color: #f18cb9;
-    font-weight: bold;
-}
-</style>
-"""
-        changelog_file = self._get_localized_doc_path("Changelog")
-        try:
-            with open(changelog_file, 'r', encoding='utf-8') as file:
-                self.content = file.read()
-                self.content = '\n'.join(self.content.split('\n')[1:])
-        except FileNotFoundError:
-            sys.exit(1)
-        changelog_content = changelog_style + markdown.markdown(self.content).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
-        self.changelogLabel.setText(changelog_content)
-        self.changelogLabel.setOpenExternalLinks(True)
+    def _buildChangelogDoc(self):
+        content = self._read_doc("Changelog", skip_lines=1)
+        return _md_style(_LINK_CSS) + markdown.markdown(content).replace('<h2>', '<br><h2>').replace('</h2>', '</h2><hr>').replace('<br>', '', 1) + '<br>'
 
     def retranslateUi(self):
         StyleSheet.HELP_INTERFACE.apply(self)
@@ -217,8 +185,12 @@ a {
             self.pivot.items[attr].setText(text)
             positions[attr] = getattr(self, attr).verticalScrollBar().value()
         self.pivot.adjustSize()
-        # 重新读取本地文档，但不重建标签页或重复连接信号。
-        self.__initCard()
+        # 语言变了文档路径也变了：重新渲染已打开过的标签页，未打开过的留待首次切换时渲染。
+        rebuild = [name for name in DOC_OF_TAB if name in self._builtDocs]
+        self._builtDocs.clear()
+        self._docContent.clear()
+        for name in rebuild:
+            self._ensureDocBuilt(name)
         for attr, position in positions.items():
             getattr(self, attr).verticalScrollBar().setValue(position)
 
@@ -306,6 +278,8 @@ a {
     def onCurrentIndexChanged(self, index):
         widget = self.stackedWidget.widget(index)
         self.pivot.setCurrentItem(widget.objectName())
+        # 首次切换到该页时才渲染它的文档。
+        self._ensureDocBuilt(widget.objectName())
 
         self.verticalScrollBar().setValue(0)
 
@@ -332,22 +306,6 @@ a {
         return localized_doc_path(base_name)
 
     def __themeChanged(self):
-        if qconfig.theme.name == "DARK":
-            self.tutorialLabel.setText(self.tutorial_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.tutorialLabel.setText(self.tutorial_content)
-
-        if qconfig.theme.name == "DARK":
-            self.workflowLabel.setText(self.workflow_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.workflowLabel.setText(self.workflow_content)
-
-        if qconfig.theme.name == "DARK":
-            self.backgroundLabel.setText(self.background_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.backgroundLabel.setText(self.background_content)
-
-        if qconfig.theme.name == "DARK":
-            self.tasksLabel.setText(self.tasks_content.replace("border: 1px solid black;", "border: 1px solid white;"))
-        else:
-            self.tasksLabel.setText(self.tasks_content)
+        # 只重设已经渲染过的标签页，未渲染的会在首次打开时按当时主题生成。
+        for name in list(self._builtDocs):
+            self._applyDoc(name)

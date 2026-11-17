@@ -1,10 +1,10 @@
 from utils.game_options import game_option_enabled
 from utils.desktop_twin import in_desktop_twin
-from PySide6.QtCore import Qt, QSize, QPoint, QFileSystemWatcher, Signal, QObject, QTimer, QThread, QSignalBlocker
+from PySide6.QtCore import Qt, QPoint, QFileSystemWatcher, Signal, QObject, QTimer, QThread, QSignalBlocker
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QLabel, QHBoxLayout, QVBoxLayout
 
-from qfluentwidgets import NavigationItemPosition, MSFluentWindow, SplashScreen, setThemeColor, NavigationBarPushButton, setTheme, Theme, themeColor, qconfig
+from qfluentwidgets import NavigationItemPosition, MSFluentWindow, setThemeColor, NavigationBarPushButton, setTheme, Theme, themeColor, qconfig
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition, PrimaryPushButton, SystemTrayMenu, ToolTipFilter, ToolTipPosition
 from app.tools.game_starter import GameStartStatus, GameLaunchThread
@@ -18,6 +18,7 @@ from .workflow_interface import WorkflowInterface
 from .setting_interface import SettingInterface
 from .log_interface import LogInterface
 from .common.signal_bus import signalBus
+from .startup_splash import close_startup_splash, show_startup_splash, wait_for_exposure
 
 from .card.messagebox_custom import MessageBoxSupport
 from .tools.check_update import checkUpdate
@@ -118,6 +119,15 @@ class MainWindow(MSFluentWindow):
 
     def __init__(self, task=None, exit_on_complete=False, start_minimized_to_tray=False):
         super().__init__()
+
+        # 兜底显示启动画面：正常由 app.py 在导入界面模块之前就显示（幂等）；单测等直接构造
+        # 主窗口的入口也能得到同样的反馈，避免构建期出现空白窗口。
+        self._startupSplashPending = False
+        if start_minimized_to_tray:
+            close_startup_splash()
+        else:
+            show_startup_splash()
+
         self._desktop_twin_hosting = False
         self._desktop_twin_tray_action = None
         self._desktop_twin_notice = None
@@ -152,8 +162,8 @@ class MainWindow(MSFluentWindow):
         self.initNavigation()
         self.initSystemTray()
 
-        if self.start_minimized_to_tray:
-            self.hide()
+        # 所有界面构建完成后再显示窗口，窗口首次出现即为完整内容。
+        self._revealWindow()
 
         # 初始化配置文件监视器
         self.config_watcher = ConfigWatcher(os.path.abspath(cfg.config_path), self)
@@ -216,12 +226,6 @@ class MainWindow(MSFluentWindow):
         # 分离系统窗口标题与应用内标题栏文本
         self._refreshWindowTitleBar()
 
-        # 创建启动画面
-        self.splashScreen = SplashScreen(self.windowIcon(), self)
-        self.splashScreen.setIconSize(QSize(128, 128))
-        self.splashScreen.titleBar.maxBtn.setHidden(True)
-        self.splashScreen.raise_()
-
         primary_screen = QApplication.primaryScreen().availableGeometry()
         w, h = primary_screen.width(), primary_screen.height()
 
@@ -240,24 +244,78 @@ class MainWindow(MSFluentWindow):
         else:
             self.move(w // 2 - self.width() // 2, h // 2 - self.height() // 2)
 
-        # 记录期望的窗口几何（尺寸与位置）
-        target_geometry = self.geometry()
+        # 记录期望的窗口几何（尺寸与位置）。本方法不显示窗口：initInterface() 同步构建七个界面
+        # 需要数秒，此时 show() 只会让用户先看到空白/半成品窗口。改由 _revealWindow() 在界面构建
+        # 完成后一次性显示，期间由独立的启动画面窗口提供反馈。
+        self._startup_geometry = self.geometry()
 
-        # 根据配置决定窗口显示方式
+    def _revealWindow(self):
+        """界面全部构建完成后显示主窗口；启动画面等主窗口真正画出首帧后再收起。"""
+        window_memory = cfg.get_value('window_memory', 'size')
+
         if self.start_minimized_to_tray:
-            # 最小化到托盘启动：不显示主窗口与启动画面（SplashScreen 是主窗口子控件，随父窗口隐藏），直接进托盘
+            # 最小化到托盘启动：不显示主窗口与启动画面，直接进托盘
             self.hide()
-        elif window_memory in ('size', 'size_and_position') and cfg.get_value('window_maximized', False):
-            self.showMaximized()
-        else:
-            self.show()
-
-        QApplication.processEvents()
-
-        if self.start_minimized_to_tray:
+            self._closeStartupSplash()
             # 托盘启动跳过了 show() 的几何同步：构造期堆积的窗口几何事件会在 processEvents 中被处理，
             # 把窗口尺寸打回原生默认值（500x500），导致从托盘恢复后窗口异常变小，需重新应用一次几何
-            self.setGeometry(target_geometry)
+            QApplication.processEvents()
+            self.setGeometry(self._startup_geometry)
+        else:
+            maximized = window_memory in ('size', 'size_and_position') and cfg.get_value('window_maximized', False)
+            if not maximized:
+                # 先定好最终几何再显示：show() 之后再 setGeometry 会触发整窗重绘，
+                # 那一帧在主窗口表面刷新完成前就是透明的。
+                self.setGeometry(self._startup_geometry)
+
+            self._startupSplashPending = True
+            if maximized:
+                self.showMaximized()
+            else:
+                self.show()
+
+            # 关键：启动画面不在固定的时间点收起，而是等主窗口真正完成第一次绘制
+            # （见 paintEvent）。此前的做法在 show() 后立即关卡片，窗口表面还没画好，
+            # 于是「卡片消失 → 透明窗口 → 内容」这个中间态就暴露出来了。
+            self.repaint()
+            QApplication.processEvents()
+            wait_for_exposure(self)
+
+            if not maximized and self.geometry() != self._startup_geometry:
+                # 平台映射时可能把几何打回默认值，这里补一次；重绘仍发生在启动画面之下。
+                self.setGeometry(self._startup_geometry)
+                self.repaint()
+                QApplication.processEvents()
+
+            # 兜底：极端情况下首帧 paintEvent 没来，也不能让启动画面一直挂着。
+            # 时限要长于首帧绘制耗时，否则又会在内容画好之前收起卡片。
+            QTimer.singleShot(1500, self._closeStartupSplash)
+
+        # 免责声明可能退出进程，要先于后台线程：线程运行时退出会触发 Qt Fatal 中止。
+        # 放在主窗口显示之后，弹窗才有正常的窗口背景与焦点。
+        if not cfg.get_value(base64.b64decode("YXV0b191cGRhdGU=").decode("utf-8")):
+            disclaimer(self)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        # 主窗口画出第一帧后，其表面已经是完整内容，这时再收起启动画面才是无缝切换。
+        # 用 singleShot(0) 而不是立刻关闭：等这一轮绘制（含所有子控件）彻底结束再切。
+        if getattr(self, '_startupSplashPending', False):
+            self._startupSplashPending = False
+            QTimer.singleShot(0, self._finishStartupReveal)
+
+    def _finishStartupReveal(self):
+        """首帧绘制完成后收起启动画面，并把主窗口置前。"""
+        self._closeStartupSplash()
+        try:
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
+    def _closeStartupSplash(self):
+        """收起启动画面（幂等）。"""
+        close_startup_splash()
 
     def _baseTitleBarText(self):
         return f"March7th Assistant {cfg.version}"
@@ -400,12 +458,6 @@ class MainWindow(MSFluentWindow):
             routeKey=self.settingInterface.objectName(), icon=FIF.SETTING, text=tr('设置'),
             onClick=lambda: self.switchTo(self.settingInterface), position=NavigationItemPosition.BOTTOM
         )
-
-        self.splashScreen.finish()
-
-        # 免责声明可能退出进程，要先于后台线程：线程运行时退出会触发 Qt Fatal 中止
-        if not cfg.get_value(base64.b64decode("YXV0b191cGRhdGU=").decode("utf-8")):
-            disclaimer(self)
 
         self.themeListener = checkThemeChange(self)
 
@@ -692,6 +744,9 @@ class MainWindow(MSFluentWindow):
                     if was_current:
                         self.stackedWidget.view.setCurrentWidget(old)
                     self.stackedWidget.removeWidget(replacement)
+                    # 设置页现在延迟构建，构造本身不再抛错；构建失败发生在 restoreViewState，
+                    # 此时要由这里释放半成品实例，否则会残留在窗口下。
+                    replacement.deleteLater()
                     raise
                 self.stackedWidget.removeWidget(old)
                 self.settingInterface = replacement
@@ -885,10 +940,13 @@ class MainWindow(MSFluentWindow):
             if hasattr(self, 'logInterface'):
                 self.logInterface.reloadConfigState()
 
+            # 设置页按需构建：尚未构建过就没有需要保留的视图状态，也无需刷新卡片，
+            # 首次构建时自然会读到刚重新加载的配置，直接跳过整页重建。
             state = self.settingInterface.captureViewState()
-            replacement = SettingInterface(self)
-            self._replace_settings_interface(replacement, state)
-            replacement = None
+            if state is not None:
+                replacement = SettingInterface(self)
+                self._replace_settings_interface(replacement, state)
+                replacement = None
             if display_connection(cfg) != self._backend_connection:
                 self.refreshBackendTasks()
 
@@ -981,6 +1039,9 @@ class MainWindow(MSFluentWindow):
 
     def closeEvent(self, e):
         """关闭窗口时根据配置执行对应操作"""
+        # 启动画面是独立顶层窗口：主窗口若在构建完成前被关闭，需一并收起，避免残留。
+        self._closeStartupSplash()
+
         from .card.messagebox_custom import MessageBoxCloseWindow
 
         close_action = cfg.get_value('close_window_action', 'ask')

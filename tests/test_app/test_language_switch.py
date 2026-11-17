@@ -504,6 +504,8 @@ def test_config_reload_refreshes_home_and_tools_for_new_backend(window, monkeypa
         control_backend="adb", ui_profile="touch_720"))
     window._on_config_file_changed()
 
+    # 设置页按需构建：没进过设置页时不会为刷新配置而重建，首次构建直接读最新配置。
+    window.settingInterface._ensureContentBuilt()
     assert window.settingInterface.adbBackendCard.backend() == "adb"
     assert window.homeInterface.basicInputView.flowLayout.count() == 2
     assert window.toolsInterface.cloudTouchCard.isHidden()

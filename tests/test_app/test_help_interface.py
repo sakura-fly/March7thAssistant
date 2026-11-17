@@ -28,6 +28,9 @@ def test_background_tab_follows_faq_and_links_open_on_site(qapp):
     try:
         order = [page.stackedWidget.widget(i).objectName() for i in range(page.stackedWidget.count())]
         assert order == ['tutorialLabel', 'workflowLabel', 'faqLabel', 'backgroundLabel', 'tasksLabel', 'changelogLabel']
+        # 帮助页按标签懒渲染，切到「后台运行」才会生成它的正文。
+        page.stackedWidget.setCurrentWidget(page.backgroundLabel)
+        qapp.processEvents()
         html = page.backgroundLabel.toHtml()
         assert 'href="/assets/docs/' not in html
         assert 'https://m7a.top/docs/#/assets/docs/Docker' in html

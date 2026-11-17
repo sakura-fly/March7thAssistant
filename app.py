@@ -348,12 +348,22 @@ if __name__ == "__main__":
 
     app.installTranslator(translator)
 
+    # 启动画面尽量早显示：下面 import app.main_window 会连带加载全部界面模块（本机实测约 1 秒），
+    # 主窗口又要等界面构建完才显示，这段时间没有任何反馈，用户会以为程序没反应。
+    _start_minimized = args.start_minimized_to_tray or _autostart_minimized
+    if not _start_minimized:
+        try:
+            from app.startup_splash import show_startup_splash
+            show_startup_splash()
+        except Exception:
+            pass
+
     # 传递任务参数给主窗口
     from app.main_window import MainWindow
     w = MainWindow(
         task=_startup_task,
         exit_on_complete=args.exit,
-        start_minimized_to_tray=args.start_minimized_to_tray or _autostart_minimized,
+        start_minimized_to_tray=_start_minimized,
     )
 
     # 注册主窗口并处理启动期间收到的挂起消息
