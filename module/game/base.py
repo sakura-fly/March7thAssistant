@@ -4,7 +4,7 @@ import shutil
 import time
 import subprocess
 import ctypes
-from typing import Literal, Tuple, Optional
+from typing import Literal, Optional, Tuple, TypeAlias
 from PIL.Image import Image
 from utils.logger.logger import Logger
 from utils.dpi import configure_dpi_awareness
@@ -14,7 +14,9 @@ from utils.dpi import configure_dpi_awareness
 # classes directly without going through app.py or main.py.
 configure_dpi_awareness()
 
-type FrameCapture = tuple[Image, tuple[int, int, int, int], float] | Literal[False]
+# 注意：这里用 TypeAlias 而不是 `type X = ...`（PEP 695），
+# 以便在 Python 3.11 及更早版本上也能正常导入。
+FrameCapture: TypeAlias = tuple[Image, tuple[int, int, int, int], float] | Literal[False]
 
 
 class GameControllerBase:

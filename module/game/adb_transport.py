@@ -286,10 +286,27 @@ def _probe_environment(adb: Adb, config) -> AdbEnvironment:
     if not sizes:
         raise AdbError("display_size", tr("无法读取 Android display 0 的分辨率"))
     width, height = map(int, sizes[-1])
-    # pm path 未安装时返回 1。列出匹配的包则在两种情况下都能读到状态。
-    packages = adb.shell(f"pm list packages {GAME_PACKAGE}").splitlines()
     return AdbEnvironment(adb.path, device, int(sdk), values.get("ro.build.version.release", ""),
-                          device_type, (width, height), f"package:{GAME_PACKAGE}" in packages, virtual_auto_focus)
+                          device_type, (width, height), _game_installed(adb), virtual_auto_focus)
+
+
+def _game_installed(adb: Adb) -> bool:
+    """判断游戏是否已安装。
+
+    华为隐私空间、分身应用这类多用户设备上，不指定用户时 shell 可能无权访问当前用户，
+    `pm list packages` 会直接以退出码 255 失败，所以先显式指定 current，再逐个回退。
+    """
+    for command in (f"pm list packages --user current {GAME_PACKAGE}",
+                    f"pm list packages {GAME_PACKAGE}"):
+        try:
+            return f"package:{GAME_PACKAGE}" in adb.shell(command)
+        except AdbError:
+            continue
+    # 列包都被拒绝时退回 pm path：已安装会输出 package:，未安装以退出码 1 结束。
+    try:
+        return adb.shell(f"pm path {GAME_PACKAGE}").startswith("package:")
+    except AdbError:
+        return False
 
 
 class ServiceClient:

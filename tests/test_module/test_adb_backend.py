@@ -288,6 +288,40 @@ def test_environment_reports_unknown_if_permission_cannot_be_read(monkeypatch, a
     assert environment.check_touch_injection() == transport.AdbTouchInjectionStatus(None)
 
 
+class FakePackageAdb:
+    """按命令前缀返回输出的假 adb，值为 None 表示该命令以退出码 255 失败。"""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.commands = []
+
+    def shell(self, command, **kwargs):
+        self.commands.append(command)
+        for prefix, output in self.responses.items():
+            if command.startswith(prefix):
+                if output is None:
+                    raise transport.AdbError("adb_failed", "ADB 命令失败：shell（退出码 255）")
+                return output
+        raise AssertionError(command)
+
+
+def test_game_check_names_the_user_when_privacy_space_is_running():
+    # 华为隐私空间这类多用户设备上，不指定用户的 pm list 会被拒绝并以 255 退出。
+    adb = FakePackageAdb({"pm list packages --user current": f"package:{transport.GAME_PACKAGE}"})
+    assert transport._game_installed(adb) is True
+    assert adb.commands == [f"pm list packages --user current {transport.GAME_PACKAGE}"]
+
+
+def test_game_check_falls_back_to_pm_path_when_listing_is_denied():
+    adb = FakePackageAdb({"pm list packages": None, "pm path": "package:/data/app/base.apk"})
+    assert transport._game_installed(adb) is True
+
+
+def test_game_check_reports_missing_game_without_raising():
+    adb = FakePackageAdb({"pm list packages": None, "pm path": None})
+    assert transport._game_installed(adb) is False
+
+
 @pytest.mark.parametrize("bundled, override, expected", [
     (True, True, "service.jar"),
     (True, False, "assets/binary/m7a-device-service.jar"),
