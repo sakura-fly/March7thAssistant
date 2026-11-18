@@ -261,6 +261,8 @@ class MainWindow(MSFluentWindow):
             # 把窗口尺寸打回原生默认值（500x500），导致从托盘恢复后窗口异常变小，需重新应用一次几何
             QApplication.processEvents()
             self.setGeometry(self._startup_geometry)
+            # 托盘启动看不到主窗口，设置页可以在后台先分步建好，用户展开时即可用。
+            QTimer.singleShot(0, self.settingInterface.startAsyncBuild)
         else:
             maximized = window_memory in ('size', 'size_and_position') and cfg.get_value('window_maximized', False)
             if not maximized:
@@ -312,6 +314,10 @@ class MainWindow(MSFluentWindow):
             self.activateWindow()
         except Exception:
             pass
+
+        # 首帧已经上屏，这时才在事件循环空闲时分段构建设置页：既不会拖慢启动，
+        # 又能在用户点开设置之前准备好内容。
+        QTimer.singleShot(0, self.settingInterface.startAsyncBuild)
 
     def _closeStartupSplash(self):
         """收起启动画面（幂等）。"""

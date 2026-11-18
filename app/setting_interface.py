@@ -44,6 +44,7 @@ import os
 import random
 import sys
 import platform
+from collections import deque
 
 
 class QqBotBindThread(QThread):
@@ -148,6 +149,9 @@ class SettingInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._content_built = False
+        # 分步构建的状态：步骤队列、是否已开始。见 startAsyncBuild / _ensureContentBuilt。
+        self._build_started = False
+        self._build_queue = None
         try:
             self.parent = parent
             self._ignoreUniverseEnableCardSwitchChanged = False
@@ -196,12 +200,29 @@ class SettingInterface(ScrollArea):
         loading_layout.addWidget(self._loadingLabel, 0, Qt.AlignmentFlag.AlignCenter)
         self.vBoxLayout.addWidget(self._loadingBox, 1)
 
-    def _ensureContentBuilt(self):
-        """构建设置页内容（幂等）。首次进入设置页时触发。"""
-        if self._content_built:
-            return
-        self._content_built = True
+    def _buildSteps(self):
+        """设置页的构建步骤序列。
 
+        拆成多步是为了在步骤之间把控制权交回事件循环：整套构建要一秒多，
+        一次性跑完会让主线程长时间无响应；分步之后每步只阻塞一两百毫秒。
+        """
+        return [
+            self.__initWidget,
+            *self._initCardParts(),
+            *self._initLayoutParts(),
+            self.__connectSignalToSlot,
+            self._refreshBackendAfterBuild,
+        ]
+
+    def _refreshBackendAfterBuild(self):
+        self.__refreshBackendSettings(self.adbBackendCard.backend())
+
+    def _afterBuild(self):
+        """全部步骤执行完毕后的收尾。"""
+        self._content_built = True
+        self._build_queue = None
+
+        # 占位提示在构建期间一直保留，构建完成才撤走。
         loading_box = getattr(self, '_loadingBox', None)
         if loading_box is not None:
             self._loadingBox = None
@@ -210,23 +231,89 @@ class SettingInterface(ScrollArea):
             loading_box.hide()
             loading_box.deleteLater()
 
+        # pivotScrollArea 是构建期才创建的：父窗口早已 show 过，新建的子控件不会自动
+        # 显示，必须显式 show，否则设置页顶部的分页菜单栏是空的。
+        self.pivotScrollArea.show()
+        StyleSheet.SETTING_INTERFACE.apply(self)
+
+        # 分步构建期间控件是一批批加进来的，若中途页面已经可见，Qt 会按当时的半成品
+        # 算好布局并固定下来。这里强制把布局链条重新激活一遍，并按当前分组的真实内容
+        # 重算高度，否则内容区只会显示最前面几张卡片。
+        self.vBoxLayout.activate()
+        self.scrollWidget.adjustSize()
+        self._refreshPageMetrics()
+        self.vBoxLayout.activate()
+
+    def _refreshPageMetrics(self):
+        """恢复分组内卡片的显示状态，并按真实内容重算内容区高度。
+
+        卡片加入分组时走的是 setParent，Qt 会把它置为隐藏；若此时分组已经可见，
+        隐藏标志会一直留着，ExpandLayout 累加高度时把它们整批跳过，内容区就只剩
+        标题那点高度。
+        """
+        current = self.stackedWidget.currentWidget()
+        if current is None:
+            return
+
+        if isinstance(current, SettingCardGroup):
+            title = getattr(current, 'titleLabel', None)
+            for child in current.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+                if child is not title:
+                    child.show()
+            current.adjustSize()
+            self.stackedWidget.setFixedHeight(current.height())
+        else:
+            self.stackedWidget.setFixedHeight(current.sizeHint().height())
+
+    def startAsyncBuild(self):
+        """在主窗口显示之后分段构建设置页，让用户点开时通常已经就绪。"""
+        if self._build_started or self._content_built:
+            return
+        self._build_started = True
+        self._build_queue = deque(self._buildSteps())
+        QTimer.singleShot(0, self._runNextBuildStep)
+
+    def _runNextBuildStep(self):
+        if self._build_queue is None:
+            return
+        if not self._build_queue:
+            self._afterBuild()
+            return
         try:
-            self.__initWidget()
-            self.__initCard()
-            self.__initLayout()
-            self.__connectSignalToSlot()
-            self.__refreshBackendSettings(self.adbBackendCard.backend())
-            StyleSheet.SETTING_INTERFACE.apply(self)
+            self._build_queue.popleft()()
+        except Exception:
+            self._build_queue = None
+            self._build_started = False
+            raise
+        if self._build_queue:
+            QTimer.singleShot(0, self._runNextBuildStep)
+        else:
+            self._afterBuild()
+
+    def _ensureContentBuilt(self):
+        """同步完成构建（幂等）。若后台分步构建已开始，则把剩余步骤一次跑完。"""
+        if self._content_built:
+            return
+        if self._build_queue is None:
+            self._build_started = True
+            self._build_queue = deque(self._buildSteps())
+        try:
+            while self._build_queue:
+                self._build_queue.popleft()()
         except Exception:
             # 构建失败时允许调用方回滚并用新实例重试（语言切换会整页替换）。
             self._content_built = False
+            self._build_started = False
+            self._build_queue = None
             raise
+        self._afterBuild()
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._content_built:
-            # 先让「正在加载设置…」绘制出来，再同步构建，避免点进来是一片空白。
-            QTimer.singleShot(30, self._ensureContentBuilt)
+        # 后台构建还没开始就点了进来：直接同步构建，避免停在占位页。
+        # 若后台构建已在进行，让它继续分步推进（很快完成）。
+        if not self._content_built and not self._build_started:
+            self._ensureContentBuilt()
 
     def __initWidget(self):
         # 外壳阶段已 setWidget，重复设置会让 QScrollArea 重建 viewport 并丢失滚动位置。
@@ -287,6 +374,28 @@ class SettingInterface(ScrollArea):
         scroller.setScrollerProperties(scroller_props)
 
     def __initCard(self):
+        """创建全部设置卡片（同步路径）。实际执行按 _initCardParts 分段。"""
+        for part in self._initCardParts():
+            part()
+
+    def _initCardParts(self):
+        """卡片构建的分段列表，供分步构建按顺序执行。"""
+        return [
+            self._initCardPart1,
+            self._initCardPart2,
+            self._initCardPart3,
+            self._initCardPart4,
+            self._initCardPart5,
+            self._initCardPart6,
+            self._initCardPart7,
+            self._initCardPart8,
+            self._initCardPart9,
+            self._initCardPart10,
+            self._initCardPart11,
+            self._initCardPart12,
+        ]
+
+    def _initCardPart1(self):
         self.PowerGroup = SettingCardGroup(tr("体力设置"), self.scrollWidget)
         self.powerPlanCard = PushSettingCardPowerPlan(
             tr('配置'),
@@ -534,6 +643,9 @@ class SettingInterface(ScrollArea):
             tr("存在双倍次数时体力优先「饰品提取」"),
             "activity_planarfissure_enable"
         )
+
+
+    def _initCardPart2(self):
         self.activityJourneyHighlightsNotificationEnableCard = SwitchSettingCard1(
             FIF.CALENDAR,
             tr('活动热点通知'),
@@ -735,6 +847,8 @@ class SettingInterface(ScrollArea):
             default=240,
         )
 
+
+    def _initCardPart3(self):
         self.UniverseGroup = SettingCardGroup(tr("差分宇宙"), self.scrollWidget)
         self.weeklyDivergentEnableCard = TimestampSwitchSettingCard(
             UiIcon.PLANET,
@@ -947,6 +1061,9 @@ class SettingInterface(ScrollArea):
             tr("每日获得特殊物品：购买秘技零食材料并合成零食"),
             texts={tr("不配置"): "不配置", tr("启用"): True, tr("停用"): False}
         )
+
+
+    def _initCardPart4(self):
         self.fightAllowMapBuyCard = ComboBoxSettingCard2(
             "fight_allow_map_buy",
             UiIcon.COIN,
@@ -1178,6 +1295,9 @@ class SettingInterface(ScrollArea):
             tr("如果勾选，那么失败后直接退出，否则失败后暂停程序。"),
             "exit_after_failure"
         )
+
+
+    def _initCardPart5(self):
         self.afterFinishCard = ExpandableComboBoxSettingCard(
             "after_finish",
             FIF.POWER_BUTTON,
@@ -1270,6 +1390,9 @@ class SettingInterface(ScrollArea):
         )
 
         self.notifyEnableGroup = []
+
+
+    def _initCardPart6(self):
         self.notifyProviderMeta = {
             "winotify": {
                 "icon": BrandIcon.WINDOWS,
@@ -2482,7 +2605,12 @@ class SettingInterface(ScrollArea):
             },
         }
 
+
+    def _initCardPart7(self):
         self.notifyEnableGroup = []
+
+
+    def _initCardPart8(self):
         provider_names = self.__getNotifyProviderNames()
         for notifier_name in provider_names:
             enable_key = f"notify_{notifier_name}_enable"
@@ -2547,18 +2675,29 @@ class SettingInterface(ScrollArea):
 
             self.notifyEnableGroup.append(notifyEnableCard)
 
+
+    def _initCardPart9(self):
         self.MiscGroup = SettingCardGroup(tr("杂项"), self.scrollWidget)
+
+
+    def _initCardPart10(self):
         self.gameOptimizationCard = SwitchSettingCard1(
             FIF.GAME, tr("启用游戏优化"),
             tr("控制自动战斗检测及本地游戏的分辨率与画质调整"),
             "game_optimization_enable",
         )
+
+
+    def _initCardPart11(self):
         self.autoBattleDetectEnableCard = SwitchSettingCard1(
             FIF.ROBOT,
             tr('启用自动战斗和二倍速检测'),
             tr("战斗时检测并补开自动战斗和二倍速"),
             "auto_battle_detect_enable"
         )
+
+
+    def _initCardPart12(self):
         self.ocrGpuAccelerationCard = ComboBoxSettingCard2(
             "ocr_gpu_acceleration",
             FIF.SPEED_HIGH,
@@ -2740,7 +2879,24 @@ class SettingInterface(ScrollArea):
             "telemetry_enable"
         )
 
+
+
     def __initLayout(self):
+        """按顺序执行布局分段（同步路径）。分段见 _initLayoutParts。"""
+        for part in self._initLayoutParts():
+            part()
+
+    def _initLayoutParts(self):
+        """布局构建的分段列表，供分步构建按顺序执行。"""
+        return [
+            self._initLayoutPart1,
+            self._initLayoutPart2,
+            self._initLayoutPart3,
+            self._initLayoutPart4,
+            self._initLayoutPart5,
+        ]
+
+    def _initLayoutPart1(self):
         self.settingLabel.move(36, 30)
         # pivot 位于 pivotScrollArea 内；x=40 与标题对齐，y=80 与原位置一致
         # height=54：pivot ~46px + 8px 供 AsNeeded 滚动条偶尔占用，底边 y=134
@@ -2809,6 +2965,9 @@ class SettingInterface(ScrollArea):
             self.dailyMemoryOneTeamCard
         ])
         self.DailyGroup.addSettingCard(self.activityEnableCard)
+
+
+    def _initLayoutPart2(self):
         self.activityEnableCard.addSettingCards([
             self.activityDailyCheckInEnableCard,
             self.activityGardenOfPlentyEnableCard,
@@ -2863,6 +3022,8 @@ class SettingInterface(ScrollArea):
         self.UniverseGroup.addSettingCard(self.weeklyDivergentStableModeCard)
         self.UniverseGroup.addSettingCard(self.divergentAutoSaveCard)
 
+
+    def _initLayoutPart3(self):
         self.UniverseGroup.addSettingCard(self.universeEnableCard)
         self.universeEnableCard.addSettingCards([
             self.universeCategoryCard,
@@ -2919,6 +3080,9 @@ class SettingInterface(ScrollArea):
             self.browserLaunchArgCard
         ])
         self.browserHeadlessCard.addSettingCards([self.browserHeadlessRestartCard])
+
+
+    def _initLayoutPart4(self):
         self.updateViaLauncherEnableCard.addSettingCards([
             self.launcherPathCard,
             self.launcherType,
@@ -2974,6 +3138,9 @@ class SettingInterface(ScrollArea):
 
         self.AboutGroup.addSettingCard(self.githubCard)
         self.AboutGroup.addSettingCard(self.agentPromptCard)
+
+
+    def _initLayoutPart5(self):
         self.AboutGroup.addSettingCard(self.bilibiliCard)
         self.AboutGroup.addSettingCard(self.qqGroupCard)
         # self.AboutGroup.addSettingCard(self.feedbackCard)
@@ -2989,38 +3156,42 @@ class SettingInterface(ScrollArea):
         self.AboutGroup.addSettingCard(self.languageCard)
         self.AboutGroup.addSettingCard(self.telemetryCard)
 
-        self.addSubInterface(self.PowerGroup, 'PowerInterface', tr('体力'))
-        # self.addSubInterface(self.BorrowGroup, 'BorrowInterface', '支援')
-        self.addSubInterface(self.DailyGroup, 'DailyInterface', tr('日常'))
-        self.addSubInterface(self.CurrencywarsGroup, 'CurrencywarsInterface', tr('货币战争'))
-        self.addSubInterface(self.UniverseGroup, 'UniverseInterface', tr('差分宇宙'))
-        if sys.platform == 'win32':
-            self.addSubInterface(self.FightGroup, 'FightInterface', tr('锄大地'))
-        else:
-            self.FightGroup.setHidden(True)
-        self.addSubInterface(self.ImmortalGameGroup, 'ImmortalGameInterface', tr('逐光捡金'))
+        # 加页期间屏蔽 currentChanged：每加一页都会触发 onCurrentIndexChanged 里的
+        # setFixedHeight(sizeHint())，而设置分组页有两百多张卡片，重算一次要几十毫秒。
+        # 这里先屏蔽、加完统一算一次，原本要算十来次。
+        with QSignalBlocker(self.stackedWidget):
+            self.addSubInterface(self.PowerGroup, 'PowerInterface', tr('体力'))
+            # self.addSubInterface(self.BorrowGroup, 'BorrowInterface', '支援')
+            self.addSubInterface(self.DailyGroup, 'DailyInterface', tr('日常'))
+            self.addSubInterface(self.CurrencywarsGroup, 'CurrencywarsInterface', tr('货币战争'))
+            self.addSubInterface(self.UniverseGroup, 'UniverseInterface', tr('差分宇宙'))
+            if sys.platform == 'win32':
+                self.addSubInterface(self.FightGroup, 'FightInterface', tr('锄大地'))
+            else:
+                self.FightGroup.setHidden(True)
+            self.addSubInterface(self.ImmortalGameGroup, 'ImmortalGameInterface', tr('逐光捡金'))
 
-        self.pivot.addItem(
-            routeKey='verticalBar',
-            text="|",
-            onClick=lambda: self.pivot.setCurrentItem(self.stackedWidget.currentWidget().objectName()),
-        )
-
-        self.addSubInterface(self.ProgramGroup, 'programInterface', tr('程序'))
-        self.addSubInterface(self.GameConnectionGroup, "gameConnectionInterface", tr('游戏连接'))
-        self.addSubInterface(self.NotifyGroup, 'NotifyInterface', tr('推送'))
-        self.addSubInterface(self.MiscGroup, 'KeybindingInterface', tr('杂项'))
-        if sys.platform == 'win32':
-            self.addSubInterface(
-                accounts_interface(self.tr, self.scrollWidget),
-                'AccountsInterface',
-                tr('账号')
+            self.pivot.addItem(
+                routeKey='verticalBar',
+                text="|",
+                onClick=lambda: self.pivot.setCurrentItem(self.stackedWidget.currentWidget().objectName()),
             )
-        self.addSubInterface(self.AboutGroup, 'AboutInterface', tr('关于'))
+
+            self.addSubInterface(self.ProgramGroup, 'programInterface', tr('程序'))
+            self.addSubInterface(self.GameConnectionGroup, "gameConnectionInterface", tr('游戏连接'))
+            self.addSubInterface(self.NotifyGroup, 'NotifyInterface', tr('推送'))
+            self.addSubInterface(self.MiscGroup, 'KeybindingInterface', tr('杂项'))
+            if sys.platform == 'win32':
+                self.addSubInterface(
+                    accounts_interface(self.tr, self.scrollWidget),
+                    'AccountsInterface',
+                    tr('账号')
+                )
+            self.addSubInterface(self.AboutGroup, 'AboutInterface', tr('关于'))
 
         self.stackedWidget.currentChanged.connect(self.onCurrentIndexChanged)
         self.pivot.setCurrentItem(self.stackedWidget.currentWidget().objectName())
-        self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
+        self._refreshPageMetrics()
 
         # ── pivot 尺寸与滚动过滤器 ────────────────────────────────────
         # 所有 addItem 调用完成后 pivot 才能计算正确宽度
@@ -3031,6 +3202,7 @@ class SettingInterface(ScrollArea):
         self.pivot.installEventFilter(self._pivot_scroll_filter)
         for child in self.pivot.findChildren(QWidget):
             child.installEventFilter(self._pivot_scroll_filter)
+
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3078,9 +3250,9 @@ class SettingInterface(ScrollArea):
             if widget.objectName() == state['tab'] and not self.pivot.items[state['tab']].isHidden():
                 self.stackedWidget.setCurrentWidget(widget)
                 break
-        self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
         self.vBoxLayout.activate()
         self.scrollWidget.adjustSize()
+        self._refreshPageMetrics()
         self.verticalScrollBar().setValue(state['scroll'])
         self.pivotScrollArea.horizontalScrollBar().setValue(state['pivot_scroll'])
         if state.get('language_focus'):
@@ -3585,7 +3757,8 @@ class SettingInterface(ScrollArea):
         self.pivot.setCurrentItem(widget.objectName())
 
         self.verticalScrollBar().setValue(0)
-        self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
+        # sizeHint 在 ExpandLayout 下只反映一张卡片的高度，必须按真实内容重算。
+        self._refreshPageMetrics()
 
     # def __onImportConfigCardClicked(self):
     #     configdir, _ = QFileDialog.getOpenFileName(self, "选取配置文件", "./", "Config Files (*.yaml)")
@@ -3779,8 +3952,9 @@ class SettingInterface(ScrollArea):
             # 如果无法获取发送者，使用默认高度（向后兼容）
             card_weight = 0
 
-        # 在动画执行前调整 stackedWidget 高度
+        # 在动画执行前调整 stackedWidget 高度。ExpandLayout 的 sizeHint 只反映一张卡片，
+        # 这里用分组当前的真实高度作为基准。
         if is_expanding:
-            self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height() + card_weight)
+            self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().height() + card_weight)
         else:
-            self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
+            self._refreshPageMetrics()
